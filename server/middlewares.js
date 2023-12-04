@@ -43,11 +43,12 @@ export async function authenticate(req, res, next) {
             throw unauthorized('Invalid nonce')
         }
 
-        payload.nonce = nonce
+        //copy payload and add nonce to it, to avoid changing the original payload
+        const payloadCopy = { ...payload, nonce }
 
         const keyPair = Keypair.fromPublicKey(pubkey)
 
-        const messageToSign = `${pubkey}:${JSON.stringify(sortObjectKeys(payload))}`
+        const messageToSign = `${pubkey}:${JSON.stringify(sortObjectKeys(payloadCopy))}`
         const messageHash = createHash('sha256').update(messageToSign, 'utf8').digest()
         const isValid = keyPair.verify(messageHash, Buffer.from(signature, 'hex'))
         if (!isValid)
