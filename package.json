@@ -17,7 +17,7 @@
     "jest": "^29.5.0"
   },
   "dependencies": {
-    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v0.6.0",
+    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v0.7.0",
     "@reflector/oracle-client": "github:reflector-network/oracle-client#v3.0.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
