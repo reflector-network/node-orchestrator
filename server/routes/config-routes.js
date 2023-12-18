@@ -63,14 +63,14 @@ function configRoutes(app) {
      *                   type: object
      *                   properties:
      *                     config:
-     *                       $ref: '#/components/schemas/Config'
+     *                       $ref: '#/components/schemas/ConfigEnvelope'
      *                     hash:
      *                       type: string
      *                 pendingConfig:
      *                   type: object
      *                   properties:
      *                     config:
-     *                       $ref: '#/components/schemas/Config'
+     *                       $ref: '#/components/schemas/ConfigEnvelope'
      *                     hash:
      *                       type: string
      *       404:
@@ -82,19 +82,19 @@ function configRoutes(app) {
      * @openapi
      * /config:
      *   post:
-     *     summary: Create new config
+     *     summary: Create new config proposal or vote for existing one
      *     tags:
      *       - Config
      *     requestBody:
      *       content:
      *         application/json:
      *           schema:
-     *             $ref: '#/components/schemas/Config'
+     *             $ref: '#/components/schemas/ConfigEnvelope'
      *     security:
      *       - ed25519Auth: []
      *     responses:
      *       200:
-     *         description: Signature added
+     *         description: Config submitted
      *         content:
      *           application/json:
      *             schema:

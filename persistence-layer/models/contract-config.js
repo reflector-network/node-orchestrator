@@ -10,13 +10,18 @@ const nodeSchema = new mongoose.Schema({
     url: {
         type: String,
         required: true
+    },
+    domain: {
+        type: String,
+        required: false
     }
 }, {_id: false})
 
 nodeSchema.methods.toPlainObject = function () {
     return sortObjectKeys({
         pubkey: this.pubkey,
-        url: this.url
+        url: this.url,
+        domain: this.domain
     })
 }
 

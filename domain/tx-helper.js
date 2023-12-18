@@ -3,6 +3,10 @@ const {buildUpdateTransaction} = require('@reflector/reflector-shared')
 const appConfig = require('./app-config')
 
 /**
+ * @typedef {import('@reflector/reflector-shared').Config} Config
+ */
+
+/**
  *
  * @param {Config} currentConfig
  * @param {Config} newConfig
@@ -11,11 +15,12 @@ const appConfig = require('./app-config')
  */
 async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
     const {network, systemAccount} = currentConfig
-    const accountResponse = await (new Horizon.Server(appConfig.horizonUrl)).loadAccount(systemAccount)
+    const {url, passphrase} = appConfig.getNetworkConfig(network)
+    const accountResponse = await (new Horizon.Server(url)).loadAccount(systemAccount)
     const account = new Account(systemAccount, accountResponse.sequence)
     const tx = await buildUpdateTransaction({
-        network,
-        horizonUrl: appConfig.horizonUrl,
+        network: passphrase,
+        horizonUrl: url,
         currentConfig,
         newConfig,
         account,

@@ -9,12 +9,12 @@ class AppConfig {
         if (!rawConfig.port || isNaN(rawConfig.port))
             throw new Error('port is undefined or not a number')
         this.port = rawConfig.port
-        if (!rawConfig.horizonUrl)
-            throw new Error('horizonUrl is undefined')
-        this.horizonUrl = rawConfig.horizonUrl
+        if (!rawConfig.networks)
+            throw new Error('networks is undefined')
         if (rawConfig.whitelist)
             this.whitelist = rawConfig.whitelist
         this.__assignDefaultNodes(rawConfig.defaultNodes)
+        this.__assignNetworks(rawConfig.networks)
     }
 
     /**
@@ -33,9 +33,9 @@ class AppConfig {
     whitelist = []
 
     /**
-     * @type {string}
+     * @type {Map<string, {url: string, passphrase: string}>}
      */
-    horizonUrl = null
+    networks = new Map()
 
     /**
      * @type {string[]}
@@ -50,6 +50,36 @@ class AppConfig {
         if (defaultNodes.length === 0)
             throw new Error('defaultNodes is empty')
         this.defaultNodes = defaultNodes
+    }
+
+    __assignNetworks(networks) {
+        if (!networks)
+            throw new Error('networks is undefined')
+        const networkNames = Object.keys(networks)
+        if (networkNames.length === 0)
+            throw new Error('networks is empty')
+        for (const networkName of networkNames) {
+            const network = networks[networkName]
+            if (!network)
+                throw new Error(`${networkName} is undefined`)
+            if (!network.url)
+                throw new Error(`${networkName}.url is undefined`)
+            if (!network.passphrase)
+                throw new Error(`${networkName}.passphrase is undefined`)
+            this.networks.set(networkName, {url: network.url, passphrase: network.passphrase})
+        }
+    }
+
+    /**
+     * @param {string} network
+     * @returns {{url: string, passphrase: string}}
+     */
+    getNetworkConfig(network) {
+        if (!network)
+            throw new Error('network is undefined')
+        if (!this.networks.has(network))
+            throw new Error(`Unsupported network: ${network}`)
+        return this.networks.get(network)
     }
 }
 

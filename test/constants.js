@@ -5,7 +5,16 @@ const nodeKps = [
 ]
 
 const constatns = {
-    horizonUrl: "https://horizon-testnet.stellar.org",
+    networks: {
+        testnet: {
+            url: "https://horizon-testnet.stellar.org",
+            passphrase: "Test SDF Network ; September 2015"
+        },
+        public: {
+            url: "https://horizon.stellar.org",
+            passphrase: "Public Global Stellar Network ; September 2015"
+        }
+    },
     dbConnectionString: "mongodb://127.0.0.1:27017/reflector-orchestrator-test",
     port: 3000,
     defaultNodes: nodeKps.map(kp => kp.publicKey()),
@@ -138,7 +147,8 @@ const constatns = {
             const pubkey = node.publicKey()
             nodes[pubkey] = {
                 pubkey,
-                url: `ws://127.0.0.1:300${i}`
+                url: `ws://127.0.0.1:300${i}`,
+                domain: `trusted-node-${i}.com`
             }
             return nodes
         }, {})
