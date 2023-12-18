@@ -1,8 +1,8 @@
-import configProvider from '../../domain/config-provider.js'
-import { registerRoute } from '../route.js'
+const configProvider = require('../../domain/config-provider')
+const {registerRoute} = require('../route')
 
 
-export default function configRoutes(app) {
+function configRoutes(app) {
     /**
      * @openapi
      * /config/history:
@@ -26,7 +26,7 @@ export default function configRoutes(app) {
      *         description: Status
      *         schema:
      *           type: string
-     *           enum: [pending, applied, rejected, voting]
+     *           enum: [pending, applied, rejected, voting, replaced]
      *       - in: query
      *         name: initiator
      *         description: Initiator
@@ -37,14 +37,12 @@ export default function configRoutes(app) {
      *         description: Config
      *         content:
      *           application/json:
-     *             schema: 
+     *             schema:
      *               type: array
      *               items:
      *                 $ref: '#/components/schemas/Config'
      */
-    registerRoute(app, 'config/history', { method: 'get', allowAnonymous: true }, async (req, res) => {
-        return configProvider.history(req.query)
-    })
+    registerRoute(app, 'config/history', {method: 'get', allowAnonymous: true}, async (req) => await configProvider.history(req.query, !!req.pubkey))
 
     /**
      * @openapi
@@ -58,19 +56,27 @@ export default function configRoutes(app) {
      *         description: Config
      *         content:
      *           application/json:
-     *             schema: 
+     *             schema:
      *               type: object
      *               properties:
      *                 currentConfig:
-     *                   $ref: '#/components/schemas/Config'
+     *                   type: object
+     *                   properties:
+     *                     config:
+     *                       $ref: '#/components/schemas/Config'
+     *                     hash:
+     *                       type: string
      *                 pendingConfig:
-     *                   $ref: '#/components/schemas/Config'
+     *                   type: object
+     *                   properties:
+     *                     config:
+     *                       $ref: '#/components/schemas/Config'
+     *                     hash:
+     *                       type: string
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', { method: 'get', allowAnonymous: true }, async (req, res) => {
-        return {currentConfig: configProvider.currentConfig, pendingConfig: configProvider.pendingConfig}
-    })
+    registerRoute(app, 'config', {method: 'get', allowAnonymous: true}, (req) => configProvider.getCurrentConfigs(!!req.pubkey))
 
     /**
      * @openapi
@@ -96,8 +102,10 @@ export default function configRoutes(app) {
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', { method: 'post'}, async (req, res) => {
+    registerRoute(app, 'config', {method: 'post'}, async (req, res) => {
         await configProvider.create(req.body)
-        return { ok: 1 }
+        return {ok: 1}
     })
 }
+
+module.exports = configRoutes

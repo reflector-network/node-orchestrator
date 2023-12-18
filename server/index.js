@@ -1,11 +1,11 @@
-import http from 'http'
-import express from 'express'
-import bodyParser from 'body-parser'
-import registerSwaggerRoute from './swagger.js'
-import { HttpError, badRequest } from './errors.js'
-import configRoutes from './routes/config-routes.js'
-import { WebSocketServer } from 'ws'
-import { ValidationError } from '@reflector/reflector-shared'
+const http = require('http')
+const express = require('express')
+const bodyParser = require('body-parser')
+const {WebSocketServer} = require('ws')
+const {ValidationError} = require('@reflector/reflector-shared')
+const registerSwaggerRoute = require('./swagger')
+const {HttpError, badRequest} = require('./errors')
+const configRoutes = require('./routes/config-routes')
 
 function normalizePort(val) {
     const port = parseInt(val, 10)
@@ -30,13 +30,13 @@ class Server {
         this.app.disable('x-powered-by')
 
         this.app.use(bodyParser.json())
-        this.app.use(bodyParser.urlencoded({ extended: false }))
+        this.app.use(bodyParser.urlencoded({extended: false}))
 
         //register routes
         registerSwaggerRoute(this.app)
         configRoutes(this.app)
 
-        const wss = new WebSocketServer({ noServer: true })
+        const wss = new WebSocketServer({noServer: true})
 
         wss.on('connection', function connection(ws) {
             ws.on('message', function incoming(message) {
@@ -57,10 +57,10 @@ class Server {
                 if (err instanceof ValidationError)
                     err = badRequest(err.message, err.details)
                 if (err instanceof HttpError)
-                    return res.status(err.code).json({ error: err.message, status: err.code })
+                    return res.status(err.code).json({error: err.message, status: err.code})
                 //unhandled error
                 console.error(err)
-                res.status(500).json({ error: 'Internal server error', status: 500 })
+                res.status(500).json({error: 'Internal server error', status: 500})
             }
             res.status((err && err.code) || 500).end()
         })
@@ -78,15 +78,18 @@ class Server {
                 throw error
             const bind = typeof this.port === 'string' ? 'Pipe ' + this.port : 'Port ' + this.port
             switch (error.code) {
-                case 'EACCES':
+                case 'EACCES': {
                     console.error(bind + ' requires elevated privileges')
-                    process.exit(1)
-                case 'EADDRINUSE':
+                    break
+                }
+                case 'EADDRINUSE': {
                     console.error(bind + ' is already in use')
-                    process.exit(1)
+                    break
+                }
                 default:
-                    throw error
+                    console.error(error)
             }
+            throw error
         })
 
         //Integrate WebSocket server with HTTP server
@@ -102,4 +105,4 @@ class Server {
     }
 }
 
-export default Server
+module.exports = Server

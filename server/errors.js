@@ -1,4 +1,4 @@
-export class HttpError extends Error {
+class HttpError extends Error {
     constructor(message) {
         super(message)
     }
@@ -23,7 +23,7 @@ export class HttpError extends Error {
     }
 }
 
-function generateError({ message, code, details }) {
+function generateError({message, code, details}) {
     //todo: implement custom Error class with customized toString serialization which displays code and original message details
     const error = new HttpError(message)
     error.code = code || 0
@@ -36,47 +36,59 @@ function withDetails(message, details) {
     return `${message} ${details}`
 }
 
-export function handleSystemError(error) {
+function handleSystemError(error) {
     console.error(error)
 }
-export function genericError(internalError) {
+function genericError(internalError) {
     return generateError({
         message: 'Error occurred. If this error persists, please contact our support team.',
         code: 0,
         internalError
     })
 }
-export function badRequest(message = null, details = null) {
+function badRequest(message = null, details = null) {
     return generateError({
         message: withDetails('Bad request.', message),
         code: 400,
         details
     })
 }
-export function forbidden(message = null, details = null) {
+function forbidden(message = null, details = null) {
     return generateError({
         message: withDetails('Forbidden.', message),
         code: 403,
         details
     })
 }
-export function unauthorized(message = null, details = null) {
+function unauthorized(message = null, details = null) {
     return generateError({
         message: withDetails('Unauthorized.', message),
         code: 401,
         details
     })
 }
-export function notFound(message = null, details = null) {
+function notFound(message = null, details = null) {
     return generateError({
         message: withDetails('Not found.', message),
         code: 404,
         details
     })
 }
-export function validationError(invalidParamName, message = null, details = null) {
+function validationError(invalidParamName, message = null, details = null) {
     return this.badRequest(`Invalid parameter: ${invalidParamName}.`, message, details)
 }
-export function notImplemented() {
+function notImplemented() {
     return new Error('Not implemented')
+}
+
+module.exports = {
+    HttpError,
+    handleSystemError,
+    genericError,
+    badRequest,
+    forbidden,
+    unauthorized,
+    notFound,
+    validationError,
+    notImplemented
 }

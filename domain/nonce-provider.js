@@ -1,4 +1,4 @@
-import NonceModel from '../persistence-layer/models/nonce.js'
+const NonceModel = require('../persistence-layer/models/nonce')
 
 const cache = {}
 
@@ -33,4 +33,4 @@ const nonceProvider = {
     }
 }
 
-export default nonceProvider
+module.exports = nonceProvider

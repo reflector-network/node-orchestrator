@@ -1,6 +1,6 @@
-import { default as mongoose } from 'mongoose'
-import signatureSchema from './signature.js'
-import { sortObjectKeys } from '@reflector/reflector-shared'
+const mongoose = require('mongoose')
+const {sortObjectKeys, mapToPlainObject} = require('@reflector/reflector-shared')
+const signatureSchema = require('./signature')
 
 const nodeSchema = new mongoose.Schema({
     pubkey: {
@@ -11,20 +11,19 @@ const nodeSchema = new mongoose.Schema({
         type: String,
         required: true
     }
-}, { _id: false })
+}, {_id: false})
 
 nodeSchema.methods.toPlainObject = function () {
     return sortObjectKeys({
         pubkey: this.pubkey,
-        url: this.url,
-        removed: this.removed
+        url: this.url
     })
 }
 
 const assetSchema = new mongoose.Schema({
-    type: { type: Number, required: true },
-    code: { type: String, required: true }
-}, { _id: false })
+    type: {type: Number, required: true},
+    code: {type: String, required: true}
+}, {_id: false})
 
 assetSchema.methods.toPlainObject = function () {
     return sortObjectKeys({
@@ -42,7 +41,7 @@ const contractConfigSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    network: {
+    dataSource: {
         type: String,
         required: true
     },
@@ -70,13 +69,13 @@ const contractConfigSchema = new mongoose.Schema({
         type: Number,
         required: true
     }
-}, { _id: false })
+}, {_id: false})
 
 contractConfigSchema.methods.toPlainObject = function () {
     return sortObjectKeys({
         oracleId: this.oracleId,
         admin: this.admin,
-        network: this.network,
+        dataSource: this.dataSource,
         baseAsset: this.baseAsset.toPlainObject(),
         decimals: this.decimals,
         assets: this.assets.map(a => a.toPlainObject()),
@@ -87,43 +86,27 @@ contractConfigSchema.methods.toPlainObject = function () {
 }
 
 const configSchema = new mongoose.Schema({
-    contracts: { type: [contractConfigSchema], required: true },
-    nodes: { type: [nodeSchema], required: true },
-    minDate: { type: Number, required: true },
-    wasmHash: { type: String, length: 64 }
-}, { _id: false })
+    contracts: {type: mongoose.Schema.Types.Map, of: contractConfigSchema, required: true},
+    nodes: {type: mongoose.Schema.Types.Map, of: nodeSchema, required: true},
+    network: {type: String, required: true},
+    minDate: {type: Number, required: true},
+    wasmHash: {type: String, length: 64},
+    systemAccount: {type: String, required: true}
+}, {_id: false})
 
 configSchema.methods.toPlainObject = function () {
     return sortObjectKeys({
-        contracts: this.contracts.map(c => c.toPlainObject()),
-        nodes: this.nodes.map(n => n.toPlainObject()),
+        contracts: mapToPlainObject(this.contracts),
+        nodes: mapToPlainObject(this.nodes),
         minDate: this.minDate,
-        wasmHash: this.wasmHash
+        wasmHash: this.wasmHash,
+        network: this.network,
+        systemAccount: this.systemAccount
     })
 }
 
-configSchema.pre('save', function (next) {
-    const { nodes, contracts } = this
-    for (let node of nodes) {
-        if (nodes.filter(n => n.pubkey === node.pubkey).length > 1)
-            return next(new Error('Duplicate pubkey found in nodes'))
-    }
-
-    for (let contract of contracts) {
-        if (contracts.filter(c => c.oracleId === contract.oracleId).length > 1)
-            return next(new Error('Duplicate oracleId found in contracts'))
-
-        for (let asset of contract.assets) {
-            if (contract.assets.filter(a => a.code === asset.code && a.type === asset.type).length > 1) {
-                return next(new Error('Duplicate asset found in contracts'));
-            }
-        }
-    }
-    next()
-})
-
 const configEnvelopeSchemaModel = new mongoose.Schema({
-    config: { type: configSchema, required: true },
+    config: {type: configSchema, required: true},
     signatures: {
         type: [signatureSchema],
         required: true
@@ -141,10 +124,15 @@ const configEnvelopeSchemaModel = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['voting', 'pending', 'rejected', 'applied'],
+        enum: ['voting', 'pending', 'rejected', 'applied', 'replaced'],
         required: true
+    },
+    txHash: {
+        type: String,
+        required: false,
+        default: null
     }
-}, { timestamps: true })
+}, {timestamps: true})
 
 configEnvelopeSchemaModel.methods.toPlainObject = function () {
     return sortObjectKeys({
@@ -155,10 +143,11 @@ configEnvelopeSchemaModel.methods.toPlainObject = function () {
         description: this.description,
         expirationDate: this.expirationDate,
         status: this.status,
-        timestamp: this.timestamp
+        timestamp: this.timestamp,
+        txHash: this.txHash
     })
 }
 
 const ConfigEnvelopeModel = mongoose.model('Configs', configEnvelopeSchemaModel)
 
-export default ConfigEnvelopeModel
+module.exports = ConfigEnvelopeModel

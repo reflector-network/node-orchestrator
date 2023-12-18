@@ -1,4 +1,4 @@
-export default {
+module.exports = {
     extends: [
         '@stellar-expert/eslint-config-js'
     ],

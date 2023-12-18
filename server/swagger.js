@@ -1,5 +1,5 @@
-import swaggerJsdoc from 'swagger-jsdoc';
-import swaggerUi from 'swagger-ui-express';
+const swaggerJsdoc = require('swagger-jsdoc')
+const swaggerUi = require('swagger-ui-express')
 
 const globalSwaggerConfig = {
     openapi: '3.0.0',
@@ -26,69 +26,71 @@ const globalSwaggerConfig = {
             Asset: {
                 type: 'object',
                 properties: {
-                    code: { type: 'string' },
-                    type: { type: 'integer' },
+                    code: {type: 'string'},
+                    type: {type: 'integer'}
                 },
                 required: ['code', 'type']
             },
             Signature: {
                 type: 'object',
                 properties: {
-                    pubkey: { type: 'string' },
-                    signature: { type: 'string' },
-                    nonce: { type: 'integer' },
-                    rejected: { type: 'boolean' }
+                    pubkey: {type: 'string'},
+                    signature: {type: 'string'},
+                    nonce: {type: 'integer'},
+                    rejected: {type: 'boolean'}
                 },
                 required: ['pubkey', 'signature', 'nonce']
             },
             Node: {
                 type: 'object',
                 properties: {
-                    pubkey: { type: 'string' },
-                    url: { type: 'string' }
+                    pubkey: {type: 'string'},
+                    url: {type: 'string'}
                 },
                 required: ['pubkey', 'url']
             },
             ContractConfig: {
                 type: 'object',
                 properties: {
-                    oracleId: { type: 'string' },
-                    admin: { type: 'string' },
-                    network: { type: 'string' },
-                    baseAsset: { type: 'object', $ref: '#/components/schemas/Asset' },
-                    decimals: { type: 'integer' },
-                    assets: { type: 'array', items: { type: 'object', $ref: '#/components/schemas/Asset' } },
-                    timeframe: { type: 'integer' },
-                    period: { type: 'integer' },
-                    fee: { type: 'integer' },
+                    oracleId: {type: 'string'},
+                    admin: {type: 'string'},
+                    dataSource: {type: 'string'},
+                    baseAsset: {type: 'object', $ref: '#/components/schemas/Asset'},
+                    decimals: {type: 'integer'},
+                    assets: {type: 'array', items: {type: 'object', $ref: '#/components/schemas/Asset'}},
+                    timeframe: {type: 'integer'},
+                    period: {type: 'integer'},
+                    fee: {type: 'integer'}
                 },
-                required: ['oracleId', 'admin', 'network', 'baseAsset', 'decimals', 'assets', 'timeframe', 'period', 'fee']
+                required: ['oracleId', 'admin', 'dataSource', 'baseAsset', 'decimals', 'assets', 'timeframe', 'period', 'fee']
             },
             Config: {
                 type: 'object',
                 properties: {
-                    config: {
-                        type: 'object',
-                        properties: {
-                            contracts: { type: 'array', items: { type: 'object', $ref: '#/components/schemas/ContractConfig' } },
-                            nodes: { type: 'array', items: { type: 'object', $ref: '#/components/schemas/Node' } },
-                            wasmHash: { type: 'string' },
-                            minDate: { type: 'integer' }
-                        },
-                        required: ['contracts', 'nodes', 'wasmHash', 'minDate']
-                    },
-                    signatures: { type: 'array', items: { type: 'object', $ref: '#/components/schemas/Signature' } },
-                    timestamp: { type: 'integer' },
-                    description: { type: 'string' },
-                    status: { type: 'string' },
-                    initiator: { type: 'string' }
+                    contracts: {type: 'object', description: 'Key is oracle id', additionalProperties: {$ref: '#/components/schemas/ContractConfig'}},
+                    nodes: {type: 'object', description: 'Key is public key of a node', additionalProperties: {$ref: '#/components/schemas/Node'}},
+                    wasmHash: {type: 'string'},
+                    minDate: {type: 'integer'},
+                    network: {type: 'string'}
                 },
+                required: ['contracts', 'nodes', 'wasmHash', 'minDate', 'network']
+            },
+            ConfigEnvelope: {
+                type: 'object',
+                properties: {
+                    config: {type: 'object', $ref: '#/components/schemas/Config'},
+                    signatures: {type: 'array', items: {type: 'object', $ref: '#/components/schemas/Signature'}},
+                    timestamp: {type: 'integer'},
+                    description: {type: 'string'},
+                    status: {type: 'string'},
+                    initiator: {type: 'string'}
+                }
             }
         },
         OkResult: {
             type: 'object',
             properties: {
-                ok: { type: 'integer' }
+                ok: {type: 'integer'}
             },
             example: {
                 ok: 1
@@ -97,8 +99,8 @@ const globalSwaggerConfig = {
         ErrorResult: {
             type: 'object',
             properties: {
-                error: { type: 'string' },
-                status: { type: 'integer' }
+                error: {type: 'string'},
+                status: {type: 'integer'}
             }
         }
     },
@@ -120,4 +122,4 @@ const registerSwaggerRoute = (app) => {
     app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs))
 }
 
-export default registerSwaggerRoute
+module.exports = registerSwaggerRoute

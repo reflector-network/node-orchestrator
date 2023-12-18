@@ -1,22 +1,19 @@
-import Server from './server/index.js'
-import {connect, disconnect} from './persistence-layer/index.js'
-import configProvider from './domain/config-provider.js'
-import fs from 'fs'
+const Server = require('./server/index')
+const {connect, disconnect} = require('./persistence-layer/index')
+const configProvider = require('./domain/config-provider')
+const appConfig = require('./domain/app-config')
 
 
 /**
  * @returns {Promise<{shutdown: function}>}
  */
 async function init() {
-    if (!fs.existsSync('./home/app.config.json'))
-        throw new Error('app.config.json not found')
-    const config = JSON.parse(fs.readFileSync('./home/app.config.json'))
 
-    await connect(config.dbConnectionString)
-    
-    await configProvider.init(config.defaultNodes)
+    await connect(appConfig.dbConnectionString)
 
-    const server = new Server(config.port)
+    await configProvider.init(appConfig.defaultNodes)
+
+    const server = new Server(appConfig.port)
 
     function shutdown(code = 0) {
 
@@ -42,7 +39,7 @@ async function init() {
             console.error('Unhandled Rejection at: Promise')
             console.error(reason)
         })
-        
+
         process.on('SIGINT', () => {
             shutdown()
         })
@@ -58,4 +55,4 @@ async function init() {
     }
 }
 
-export default init
+module.exports = init

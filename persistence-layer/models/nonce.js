@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose')
 
 const nonceSchema = new mongoose.Schema({
     pubkey: {type: String, required: true, index: true, unique: true},
@@ -14,4 +14,4 @@ nonceSchema.methods.toPlainObject = function() {
 
 const NonceModel = mongoose.model('Nonces', nonceSchema)
 
-export default NonceModel
+module.exports = NonceModel

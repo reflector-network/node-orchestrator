@@ -1,4 +1,4 @@
-import mongoose from 'mongoose'
+const mongoose = require('mongoose')
 
 /**
  * @type {mongoose.Mongoose}
@@ -6,7 +6,7 @@ import mongoose from 'mongoose'
  */
 let __connection = null
 
-export async function connect(connectionString) {
+async function connect(connectionString) {
     try {
         const options = {
             appname: 'reflector-node-orchestrator',
@@ -18,7 +18,7 @@ export async function connect(connectionString) {
         __connection = await mongoose.connect(connectionString, options)
 
         const db = __connection.connection.db
-        const { auth } = db.options
+        const {auth} = db.options
         const target = `${auth ? auth.user + '@' : ''}${db.databaseName}`
 
         console.log('Connected to database ' + target)
@@ -27,7 +27,17 @@ export async function connect(connectionString) {
     }
 }
 
-export function disconnect() {
+async function dropDatabase() {
+    await __connection.connection.db.dropDatabase()
+}
+
+function disconnect() {
     __connection.close()
     __connection = null
+}
+
+module.exports = {
+    connect,
+    dropDatabase,
+    disconnect
 }

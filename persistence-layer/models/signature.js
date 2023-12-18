@@ -1,5 +1,5 @@
-import { sortObjectKeys } from '@reflector/reflector-shared'
-import {default as mongoose} from 'mongoose'
+const { sortObjectKeys } = require('@reflector/reflector-shared')
+const mongoose = require('mongoose')
 
 const Schema = mongoose.Schema
 
@@ -32,4 +32,4 @@ signatureSchema.methods.toPlainObject = function() {
     })
 }
 
-export default signatureSchema
+module.exports = signatureSchema

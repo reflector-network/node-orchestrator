@@ -1,4 +1,4 @@
-import { authenticate, corsMiddleware } from './middlewares.js';
+const {authenticate, corsMiddleware, mightAuthenticate} = require('./middlewares')
 
 /**
  * Register API route
@@ -13,19 +13,22 @@ import { authenticate, corsMiddleware } from './middlewares.js';
  * @param {[function]} [options.middleware] - Request middleware to use
  * @param {routeHandler} handler - Request handler
  */
-export function registerRoute(app, route, options, handler) {
-    let {
+function registerRoute(app, route, options, handler) {
+    const {
         method = 'get',
         prefix = '/',
         cors = 'whitelist',
-        prettyPrint = false,
         headers,
         middleware = [],
         allowAnonymous = false
     } = options
 
+    let prettyPrint = false
+
     if (!allowAnonymous)
         middleware.unshift(authenticate)
+    else
+        middleware.unshift(mightAuthenticate)
     middleware.unshift(corsMiddleware[cors])
 
     app[method](prefix + route, middleware, function (req, res, next) {
@@ -72,3 +75,7 @@ function processResponse(res, promise, headers, prettyPrint = false, next) {
  * @callback routeHandler
  * @param {{params: object, query: object, path: string}} req - Request object
  */
+
+module.exports = {
+    registerRoute
+}

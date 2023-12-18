@@ -4,4 +4,4 @@ const notificationProvider = {
     }
 }
 
-export default notificationProvider
+module.exports = notificationProvider
