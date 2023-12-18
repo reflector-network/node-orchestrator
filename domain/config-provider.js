@@ -186,7 +186,7 @@ function getConfigToModify(configItem) {
         return null
 
     const signatureIndex = configToModify.envelope.signatures.findIndex(s => s.pubkey === signature.pubkey)
-    if (signatureIndex >= 0 && ![ConfigStatus.VOTING, ConfigStatus.APPLIED].includes(configToModify.status))
+    if (signatureIndex >= 0 && ![ConfigStatus.VOTING].includes(configToModify.status))
         throw new ValidationError('Signature cannot be modified for this config in status ' + configToModify.status)
     return {configToModify, signatureIndex}
 }
@@ -323,7 +323,7 @@ const configProvider = {
     },
     /**
      * @param {{ status: string, initiator: string, page: number, pageSize: number }} filter - The filter
-     * @param {{ status: string, initiator: string, page: number, pageSize: number }} filter - The filter
+     * @param {boolean} onlyPublicFields - Flag to return only public fields
      * @returns {Promise<ConfigEnvelopeDto[]>}
      */
     history: async (filter, onlyPublicFields) => {
@@ -400,9 +400,9 @@ const configProvider = {
      * @returns {Node}
      */
     getNode: (pubkey) => {
-        if (configProvider.currentConfig)
-            return configProvider.currentConfig?.config.nodes.find(n => n.pubkey === pubkey)
-        return __defaultNodes.find(n => n.pubkey === pubkey)
+        if (__currentConfig)
+            return __currentConfig?.envelope.config.nodes.get(pubkey)
+        return __defaultNodes.find(n => n === pubkey)
     },
     /**
      * @param {string} pubkey - The public key of the node
