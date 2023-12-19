@@ -36,6 +36,18 @@ test('creating config', async () => {
 
 }, 3000000)
 
+test('pending config (period update)', async () => {
+    const {nodeKps, config} = constants
+
+    const newConfig = {...config}
+    newConfig.contracts.CAA2NN3TSWQFI6TZVLYM7B46RXBINZFRXZFP44BM2H6OHOPRXD5OASUW.period = 9999999
+    const signedEnvelope = getSignedEnvelope(newConfig, nodeKps[0])
+    await configProvider.create(signedEnvelope)
+
+    const pendingConfig = configProvider.getCurrentConfigs().pendingConfig
+    expect(pendingConfig.config.config.contracts.CAA2NN3TSWQFI6TZVLYM7B46RXBINZFRXZFP44BM2H6OHOPRXD5OASUW.period).toBe(9999999)
+
+}, 3000000)
 
 function getSignedEnvelope(config, kp, rejected = false) {
     const pubkey = kp.publicKey()

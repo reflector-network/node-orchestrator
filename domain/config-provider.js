@@ -289,9 +289,8 @@ function getConfigForClient(configItem, onlyPublicFields) {
     const config = configItem?.toPlainObject()
     if (!config)
         return null
-    if (onlyPublicFields) {
+    if (onlyPublicFields)
         cleanupConfig(config)
-    }
     return {
         config,
         hash: configItem?.envelope.config.getHash()
@@ -300,7 +299,7 @@ function getConfigForClient(configItem, onlyPublicFields) {
 
 const configProvider = {
     /**
-     * @param {boolean} onlyPublicFields
+     * @param {boolean} onlyPublicFields - Flag to return only public fields
      * @returns {{currentConfig: {config: ConfigEnvelopeDto, hash: string}, pendingConfig: {config: ConfigEnvelopeDto, hash: string}}} - The current configs
      */
     getCurrentConfigs(onlyPublicFields) {
@@ -313,10 +312,17 @@ const configProvider = {
         const currentConfigDoc = await ConfigEnvelopeModel.findOne({status: ConfigStatus.APPLIED}).exec()
         if (currentConfigDoc) {
             __currentConfig = new ConfigItem(currentConfigDoc.toPlainObject())
+            if (!__currentConfig.envelope.config.isValid) {
+                throw new Error(`Current config is invalid. ${__currentConfig.envelope.config.issuesString}`)
+            }
         }
         const pendingConfigDoc = await ConfigEnvelopeModel.findOne({status: {$in: [ConfigStatus.PENDING, ConfigStatus.VOTING]}}).exec()
-        if (pendingConfigDoc)
+        if (pendingConfigDoc) {
             __pendingConfig = new ConfigItem(pendingConfigDoc.toPlainObject())
+            if (!__pendingConfig.envelope.config.isValid) {
+                throw new Error(`Pending config is invalid. ${__pendingConfig.envelope.config.issuesString}`)
+            }
+        }
         if (!__currentConfig && (!defaultNodes || defaultNodes.length < 1))
             throw new Error('Default nodes are not defined')
         __defaultNodes = defaultNodes
@@ -385,7 +391,7 @@ const configProvider = {
             throw new ValidationError('Pending config already expired')
         if (config.expirationDate <= config.minDate)
             throw new ValidationError('Config min date cannot be less than expiration date')
-        if (__currentConfig && buildUpdates(1n, new Config(__currentConfig.envelope.config), config).size === 0)
+        if (__currentConfig && buildUpdates(1n, __currentConfig.envelope.config, config).size === 0)
             throw new ValidationError('Config doesn\'t have any changes')
         if (rejected)
             throw new ValidationError('Rejected signature cannot be used to create config')
@@ -394,6 +400,7 @@ const configProvider = {
 
         updateItems()
         notificationProvider.notify({type: 'config-created', data: __pendingConfig.toPlainObject()})
+
     },
     /**
      * @param {string} pubkey - The public key of the node

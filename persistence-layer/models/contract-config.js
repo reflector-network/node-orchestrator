@@ -13,7 +13,7 @@ const nodeSchema = new mongoose.Schema({
     },
     domain: {
         type: String,
-        required: false
+        required: true
     }
 }, {_id: false})
 
