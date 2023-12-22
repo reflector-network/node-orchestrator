@@ -477,7 +477,7 @@ async function createConfig(configItem, nodesCount, isInitConfig) {
 }
 
 function cleanupConfig(config) {
-    for (const node of config.config.nodes) {
+    for (const [, node] of Object.entries(config.config.nodes)) {
         delete node.url
     }
     delete config.config.wasmHash

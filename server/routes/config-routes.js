@@ -76,7 +76,7 @@ function configRoutes(app) {
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', {method: 'get', allowAnonymous: true}, (req) => container.configManager.getCurrentConfigs(!!req.pubkey))
+    registerRoute(app, 'config', {method: 'get', allowAnonymous: true}, (req) => container.configManager.getCurrentConfigs(!req.pubkey))
 
     /**
      * @openapi
