@@ -1,14 +1,32 @@
 const fs = require('fs')
-const appConfig = require('./domain/app-config')
-const init = require('./app')
+const AppConfig = require('./domain/app-config')
+const logger = require('./logger')
+const container = require('./domain/container')
+const ConfigManager = require('./domain/config-manager')
+const HandlersManager = require('./server/ws/handlers/handlers-manager')
+const StatisticsManager = require('./domain/statistics-manager')
+const Server = require('./server')
+const ConnectionManager = require('./domain/connections-manager')
 
 try {
     if (!fs.existsSync('./home/app.config.json'))
         throw new Error('app.config.json not found')
     const rawConfig = JSON.parse(fs.readFileSync('./home/app.config.json'))
 
-    appConfig.init(rawConfig)
-    init()
+    logger.info('Starting reflector orchestrator')
+
+    container.appConfig = new AppConfig(rawConfig)
+    container.configManager = new ConfigManager()
+    container.handlersManager = new HandlersManager()
+    container.statisticsManager = new StatisticsManager()
+    container.connectionManager = new ConnectionManager()
+    container.server = new Server()
+
+    require('./app')(container)
 } catch (e) {
-    console.error(e)
+    if (logger)
+        logger.error(e)
+    else
+        console.error(e)
+    setTimeout(() => process.exit(13), 1000)
 }

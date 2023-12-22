@@ -1,19 +1,20 @@
-const Server = require('./server/index')
 const {connect, disconnect} = require('./persistence-layer/index')
-const configProvider = require('./domain/config-provider')
-const appConfig = require('./domain/app-config')
-
 
 /**
+ * @typedef {import('./domain/container')} Container
+ */
+
+/**
+ * @param {Container} container
  * @returns {Promise<{shutdown: function}>}
  */
-async function init() {
+async function init(container) {
 
-    await connect(appConfig.dbConnectionString)
+    await connect(container.appConfig.dbConnectionString)
 
-    await configProvider.init(appConfig.defaultNodes)
+    await container.configManager.init(container.appConfig.defaultNodes)
 
-    const server = new Server(appConfig.port)
+    container.server.init(container.appConfig.port)
 
     function shutdown(code = 0) {
 
@@ -21,7 +22,7 @@ async function init() {
 
         console.info('Closing server.')
 
-        server.close()
+        container.server.close()
 
         console.info('Server closed.')
 
@@ -34,6 +35,9 @@ async function init() {
         process.exit(code)
 
     }
+
+    container.app = {shutdown}
+
     try {
         process.on('unhandledRejection', (reason, p) => {
             console.error('Unhandled Rejection at: Promise')
@@ -48,7 +52,7 @@ async function init() {
             shutdown()
         })
 
-        return server
+        return container.server
     } catch (e) {
         console.error(e)
         shutdown(13)

@@ -85,22 +85,127 @@ const globalSwaggerConfig = {
                     status: {type: 'string'},
                     initiator: {type: 'string'}
                 }
-            }
-        },
-        OkResult: {
-            type: 'object',
-            properties: {
-                ok: {type: 'integer'}
             },
-            example: {
-                ok: 1
-            }
-        },
-        ErrorResult: {
-            type: 'object',
-            properties: {
-                error: {type: 'string'},
-                status: {type: 'integer'}
+            OkResult: {
+                type: 'object',
+                properties: {
+                    ok: {type: 'integer'}
+                },
+                example: {
+                    ok: 1
+                }
+            },
+            ErrorResult: {
+                type: 'object',
+                properties: {
+                    error: {type: 'string'},
+                    status: {type: 'integer'}
+                }
+            },
+            Statistics: {
+                type: 'object',
+                properties: {
+                    nodeStatistics: {
+                        type: 'object',
+                        additionalProperties: {
+                            type: 'array',
+                            items: {
+                                $ref: '#/components/schemas/NodeDetail'
+                            }
+                        }
+                    },
+                    currentTimestamp: {
+                        type: 'integer',
+                        format: 'int64'
+                    },
+                    currentConfigHash: {
+                        type: 'string'
+                    }
+                }
+            },
+            NodeDetail: {
+                type: 'object',
+                properties: {
+                    connectedNodes: {
+                        type: 'array',
+                        items: {
+                            type: 'string'
+                        }
+                    },
+                    connectionIssues: {
+                        type: 'array',
+                        items: {
+                            type: 'string'
+                        }
+                    },
+                    currentConfigHash: {
+                        type: 'string'
+                    },
+                    isTraceEnabled: {
+                        type: 'boolean'
+                    },
+                    lastProcessedTimestamp: {
+                        type: 'integer',
+                        format: 'int64'
+                    },
+                    oracleStatistics: {
+                        type: 'object',
+                        additionalProperties: {
+                            $ref: '#/components/schemas/OracleStatistic'
+                        }
+                    },
+                    pendingConfigHash: {
+                        type: 'string'
+                    },
+                    startTime: {
+                        type: 'integer',
+                        format: 'int64'
+                    },
+                    submittedTransactions: {
+                        type: 'integer'
+                    },
+                    totalProcessed: {
+                        type: 'integer'
+                    },
+                    uptime: {
+                        type: 'integer'
+                    },
+                    сurrentTime: {
+                        type: 'integer',
+                        format: 'int64'
+                    },
+                    version: {
+                        type: 'string'
+                    },
+                    timeshift: {
+                        type: 'integer'
+                    }
+                }
+            },
+            OracleStatistic: {
+                type: 'object',
+                properties: {
+                    isInitialized: {
+                        type: 'boolean'
+                    },
+                    lastOracleTimestamp: {
+                        type: 'integer',
+                        format: 'int64'
+                    },
+                    lastProcessedTimestamp: {
+                        type: 'integer',
+                        format: 'int64'
+                    },
+                    oracleId: {
+                        type: 'string'
+                    },
+                    submittedTransactions: {
+                        type: 'integer'
+                    },
+                    totalProcessed: {
+                        type: 'integer'
+                    }
+                }
             }
         }
     },

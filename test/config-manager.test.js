@@ -1,15 +1,27 @@
 /*eslint-disable no-undef */
 const {createHash} = require('crypto')
 const {sortObjectKeys} = require('@reflector/reflector-shared')
-const configProvider = require('../domain/config-provider')
-const appConfig = require('../domain/app-config')
+const ConfigManager = require('../domain/config-manager')
+const AppConfig = require('../domain/app-config')
 const {connect, dropDatabase} = require('../persistence-layer')
+const HandlersManager = require('../server/ws/handlers/handlers-manager')
+const StatisticsManager = require('../domain/statistics-manager')
+const ConnectionManager = require('../domain/connections-manager')
 const constants = require('./constants')
 
+const configManager = new ConfigManager()
+
 beforeAll(async () => {
-    appConfig.init(constants)
+    const container = require('../domain/container')
+
+    container.configManager = new ConfigManager()
+    container.handlersManager = new HandlersManager()
+    container.statisticsManager = new StatisticsManager()
+    container.connectionManager = new ConnectionManager()
+
+    const appConfig = new AppConfig(constants)
     await connect(appConfig.dbConnectionString)
-    await configProvider.init(appConfig.defaultNodes)
+    await container.configManager.init(appConfig.defaultNodes)
 })
 
 afterAll(async () => {
@@ -20,15 +32,15 @@ test('creating config', async () => {
     const {nodeKps, config} = constants
 
     let signedEnvelope = getSignedEnvelope(config, nodeKps[0])
-    await configProvider.create(signedEnvelope)
+    await configManager.create(signedEnvelope)
 
-    expect(configProvider.getCurrentConfigs().pendingConfig.config.status).toBe('voting')
+    expect(configManager.getCurrentConfigs().pendingConfig.config.status).toBe('voting')
 
     signedEnvelope = getSignedEnvelope(config, nodeKps[1])
 
-    await configProvider.create(signedEnvelope)
+    await configManager.create(signedEnvelope)
 
-    const configs = configProvider.getCurrentConfigs()
+    const configs = configManager.getCurrentConfigs()
 
     expect(configs.currentConfig.config.status).toBe('applied') //init config will be applied immediately after majority of nodes signed it
 
@@ -42,9 +54,9 @@ test('pending config (period update)', async () => {
     const newConfig = {...config}
     newConfig.contracts.CAA2NN3TSWQFI6TZVLYM7B46RXBINZFRXZFP44BM2H6OHOPRXD5OASUW.period = 9999999
     const signedEnvelope = getSignedEnvelope(newConfig, nodeKps[0])
-    await configProvider.create(signedEnvelope)
+    await configManager.create(signedEnvelope)
 
-    const pendingConfig = configProvider.getCurrentConfigs().pendingConfig
+    const pendingConfig = configManager.getCurrentConfigs().pendingConfig
     expect(pendingConfig.config.config.contracts.CAA2NN3TSWQFI6TZVLYM7B46RXBINZFRXZFP44BM2H6OHOPRXD5OASUW.period).toBe(9999999)
 
 }, 3000000)

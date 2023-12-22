@@ -3,9 +3,17 @@ const express = require('express')
 const bodyParser = require('body-parser')
 const {WebSocketServer} = require('ws')
 const {ValidationError} = require('@reflector/reflector-shared')
+const {StrKey} = require('stellar-sdk')
+const logger = require('../logger')
+const container = require('../domain/container')
+const MessageTypes = require('./ws/handlers/message-types')
 const registerSwaggerRoute = require('./swagger')
 const {HttpError, badRequest} = require('./errors')
 const configRoutes = require('./routes/config-routes')
+const IncomingChannel = require('./ws/incoming-channel')
+const AnonIncomingChannel = require('./ws/anon-incoming-channel')
+const ChannelTypes = require('./ws/channel-types')
+const statisticsRoutes = require('./routes/statistics-routes')
 
 function normalizePort(val) {
     const port = parseInt(val, 10)
@@ -17,12 +25,8 @@ function normalizePort(val) {
 }
 
 class Server {
-    constructor(port) {
+    init(port) {
         this.port = normalizePort(port)
-        this.init()
-    }
-
-    init() {
         //create Express server instance
         this.app = express()
 
@@ -35,13 +39,28 @@ class Server {
         //register routes
         registerSwaggerRoute(this.app)
         configRoutes(this.app)
+        statisticsRoutes(this.app)
 
         const wss = new WebSocketServer({noServer: true})
 
-        wss.on('connection', function connection(ws) {
-            ws.on('message', function incoming(message) {
-                console.log('received: %s', message)
-            })
+        wss.on('connection', async function connection(ws, req) {
+            try {
+                const {pubkey, app} = req.headers
+                let connection = null
+                if (pubkey) {
+                    if (!StrKey.isValidEd25519PublicKey(pubkey))
+                        throw new Error('pubkey is invalid')
+                    connection = new IncomingChannel(ws, pubkey, app === 'node')
+                    await connection.send({type: MessageTypes.HANDSHAKE_REQUEST, data: {payload: connection.authPayload}})
+                } else {
+                    connection = new AnonIncomingChannel(ws, req.headers['x-forwarded-for'] || req.socket.remoteAddress)
+                }
+                container.connectionManager.add(connection)
+                logger.debug(`New connection from ${connection.ip || connection.pubkey} established`)
+            } catch (e) {
+                console.error(e)
+                ws.close(1008, e.message)
+            }
         })
 
         //error handler

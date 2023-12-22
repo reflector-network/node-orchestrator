@@ -1,6 +1,6 @@
 const {Horizon, Account} = require('stellar-sdk')
 const {buildUpdateTransaction} = require('@reflector/reflector-shared')
-const appConfig = require('./app-config')
+const container = require('./container')
 
 /**
  * @typedef {import('@reflector/reflector-shared').Config} Config
@@ -15,7 +15,7 @@ const appConfig = require('./app-config')
  */
 async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
     const {network, systemAccount} = currentConfig
-    const {url, passphrase} = appConfig.getNetworkConfig(network)
+    const {url, passphrase} = container.appConfig.getNetworkConfig(network)
     const accountResponse = await (new Horizon.Server(url)).loadAccount(systemAccount)
     const account = new Account(systemAccount, accountResponse.sequence)
     const tx = await buildUpdateTransaction({
@@ -33,7 +33,7 @@ async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
 
 async function getUpdateTx(txHash) {
     try {
-        const txResponse = await (new Horizon.Server(appConfig.horizonUrl))
+        const txResponse = await (new Horizon.Server(container.appConfig.horizonUrl))
             .transactions()
             .transaction(txHash)
             .call()

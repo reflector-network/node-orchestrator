@@ -3,7 +3,7 @@ const cors = require('cors')
 const {StrKey, Keypair} = require('stellar-sdk')
 //const { corsWhitelist } = require('../config')
 const {sortObjectKeys} = require('@reflector/reflector-shared')
-const configProvider = require('../domain/config-provider')
+const container = require('../domain/container')
 const nonceProvider = require('../domain/nonce-provider')
 const {forbidden, unauthorized} = require('./errors')
 
@@ -19,7 +19,7 @@ async function validateAuth(req) {
 
     const nonce = parseInt(rawNonce, 10)
 
-    if (!configProvider.hasNode(pubkey))
+    if (!container.configManager.hasNode(pubkey))
         throw unauthorized('Pubkey is not registered')
 
 

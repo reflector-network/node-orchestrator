@@ -1,5 +1,6 @@
 const MessageTypes = require('./message-types')
 const HandshakeResponseHandler = require('./handshake-response-handler')
+const StatisticsHandler = require('./statistics-handler')
 
 /**
  * @typedef {import('../channels/channel-base')} ChannelBase
@@ -9,7 +10,8 @@ class HandlersManager {
 
     constructor() {
         this.handlers = {
-            [MessageTypes.HANDSHAKE_RESPONSE]: new HandshakeResponseHandler()
+            [MessageTypes.HANDSHAKE_RESPONSE]: new HandshakeResponseHandler(),
+            [MessageTypes.STATISTICS]: new StatisticsHandler()
         }
     }
 

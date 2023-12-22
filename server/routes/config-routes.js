@@ -1,4 +1,4 @@
-const configProvider = require('../../domain/config-provider')
+const container = require('../../domain/container')
 const {registerRoute} = require('../route')
 
 
@@ -42,7 +42,7 @@ function configRoutes(app) {
      *               items:
      *                 $ref: '#/components/schemas/Config'
      */
-    registerRoute(app, 'config/history', {method: 'get', allowAnonymous: true}, async (req) => await configProvider.history(req.query, !!req.pubkey))
+    registerRoute(app, 'config/history', {method: 'get', allowAnonymous: true}, async (req) => await container.configManager.history(req.query, !!req.pubkey))
 
     /**
      * @openapi
@@ -76,7 +76,7 @@ function configRoutes(app) {
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', {method: 'get', allowAnonymous: true}, (req) => configProvider.getCurrentConfigs(!!req.pubkey))
+    registerRoute(app, 'config', {method: 'get', allowAnonymous: true}, (req) => container.configManager.getCurrentConfigs(!!req.pubkey))
 
     /**
      * @openapi
@@ -103,7 +103,7 @@ function configRoutes(app) {
      *         description: Config not found
      */
     registerRoute(app, 'config', {method: 'post'}, async (req, res) => {
-        await configProvider.create(req.body)
+        await container.configManager.create(req.body)
         return {ok: 1}
     })
 }

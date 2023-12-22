@@ -1,5 +1,5 @@
 class AppConfig {
-    init(rawConfig) {
+    constructor(rawConfig) {
         if (!rawConfig)
             throw new Error('rawConfig is undefined')
         if (!rawConfig.dbConnectionString)
@@ -83,4 +83,4 @@ class AppConfig {
     }
 }
 
-module.exports = new AppConfig()
+module.exports = AppConfig

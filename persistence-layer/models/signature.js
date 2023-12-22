@@ -1,4 +1,4 @@
-const { sortObjectKeys } = require('@reflector/reflector-shared')
+const {sortObjectKeys} = require('@reflector/reflector-shared')
 const mongoose = require('mongoose')
 
 const Schema = mongoose.Schema
@@ -21,7 +21,7 @@ const signatureSchema = new Schema({
         required: true,
         default: false
     }
-}, { _id: false })
+}, {_id: false})
 
 signatureSchema.methods.toPlainObject = function() {
     return sortObjectKeys({
