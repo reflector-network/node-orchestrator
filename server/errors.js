@@ -1,3 +1,5 @@
+const logger = require('../logger')
+
 class HttpError extends Error {
     constructor(message) {
         super(message)
@@ -37,7 +39,7 @@ function withDetails(message, details) {
 }
 
 function handleSystemError(error) {
-    console.error(error)
+    logger.error(error)
 }
 function genericError(internalError) {
     return generateError({

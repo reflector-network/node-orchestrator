@@ -1,4 +1,5 @@
 const container = require('../../domain/container')
+const AuthMode = require('../auth-mode')
 const {registerRoute} = require('../route')
 
 
@@ -42,7 +43,7 @@ function configRoutes(app) {
      *               items:
      *                 $ref: '#/components/schemas/Config'
      */
-    registerRoute(app, 'config/history', {method: 'get', allowAnonymous: true}, async (req) => await container.configManager.history(req.query, !!req.pubkey))
+    registerRoute(app, 'config/history', {method: 'get', authMode: AuthMode.mightAuth}, async (req) => await container.configManager.history(req.query, !!req.pubkey))
 
     /**
      * @openapi
@@ -76,7 +77,7 @@ function configRoutes(app) {
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', {method: 'get', allowAnonymous: true}, (req) => container.configManager.getCurrentConfigs(!req.pubkey))
+    registerRoute(app, 'config', {method: 'get', authMode: AuthMode.mightAuth}, (req) => container.configManager.getCurrentConfigs(!req.pubkey))
 
     /**
      * @openapi
@@ -106,6 +107,27 @@ function configRoutes(app) {
         await container.configManager.create(req.body)
         return {ok: 1}
     })
+
+    /**
+     * @openapi
+     * /nodes:
+     *   get:
+     *     summary: Get node public keys list
+     *     tags:
+     *       - Config
+     *     responses:
+     *       200:
+     *         description: Node public keys list
+     *         content:
+     *           application/json:
+     *           schema:
+     *             type: array
+     *             items:
+     *               type: string
+     *       404:
+     *         description: Config not found
+     */
+    registerRoute(app, 'nodes', {authMode: AuthMode.noAuth}, () => container.configManager.allNodePubkeys())
 }
 
 module.exports = configRoutes

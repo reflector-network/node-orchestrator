@@ -1,4 +1,4 @@
-const {Keypair} = require('stellar-sdk')
+const {Keypair} = require('@stellar/stellar-sdk')
 const nodeKps = [
     Keypair.fromSecret('SAPXRLLSLC5WLVW5YPDCGQYBDTZV6TJEXXXQCGFLHUFKG5AXGEN7KEKY'),
     Keypair.fromSecret('SA6TCIOKCFUDGOMFWKNRUZXUDO3WPKSZDDAJ4ZGWD6MAWXKCWNXZWNTT')

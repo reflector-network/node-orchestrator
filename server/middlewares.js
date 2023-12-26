@@ -1,6 +1,6 @@
 const {createHash} = require('crypto')
 const cors = require('cors')
-const {StrKey, Keypair} = require('stellar-sdk')
+const {Keypair} = require('@stellar/stellar-sdk')
 //const { corsWhitelist } = require('../config')
 const {sortObjectKeys} = require('@reflector/reflector-shared')
 const container = require('../domain/container')
@@ -31,23 +31,19 @@ async function validateAuth(req) {
     const method = req.method.toUpperCase()
     let payload = null
     if (method === 'GET') {
-        payload = new URLSearchParams(req.query).toString()
+        let path = req.route.path
+        if (path.startsWith('/'))
+            path = path.substring(1)
+        payload = path + '?' + new URLSearchParams(sortObjectKeys({...req.query, nonce})).toString()
     } else if (method === 'POST' || method === 'PUT') {
-        payload = req.body
+        payload = sortObjectKeys({...req.body, nonce})
     } else {
         throw unauthorized('Invalid request method')
     }
 
-    if (!nonce || isNaN(nonce) || nonce <= lastNonce) {
-        throw unauthorized('Invalid nonce')
-    }
-
-    //copy payload and add nonce to it, to avoid changing the original payload
-    const payloadCopy = {...payload, nonce}
-
     const keyPair = Keypair.fromPublicKey(pubkey)
 
-    const messageToSign = `${pubkey}:${JSON.stringify(sortObjectKeys(payloadCopy))}`
+    const messageToSign = `${pubkey}:${JSON.stringify(payload)}`
     const messageHash = createHash('sha256').update(messageToSign, 'utf8').digest()
     const isValid = keyPair.verify(messageHash, Buffer.from(signature, 'hex'))
     if (!isValid)
@@ -65,12 +61,12 @@ async function authenticate(req, res, next) {
     }
 }
 
-const mightAuthenticate = (req, res, next) => {
+const mightAuthenticate = async (req, res, next) => {
     try {
 
         const {authorization} = req.headers
         if (authorization)
-            validateAuth(req)
+            await validateAuth(req)
         next()
     } catch (err) {
         next(err)

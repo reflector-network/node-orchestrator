@@ -1,4 +1,5 @@
 const container = require('../../domain/container')
+const AuthMode = require('../auth-mode')
 const {registerRoute} = require('../route')
 
 
@@ -18,7 +19,7 @@ function statisticsRoutes(app) {
      *             schema:
      *               $ref: '#/components/schemas/Statistics'
      */
-    registerRoute(app, 'statistics', {method: 'get', allowAnonymous: true}, () => container.statisticsManager.getStatistics())
+    registerRoute(app, 'statistics', {method: 'get', authMode: AuthMode.noAuth}, () => container.statisticsManager.getStatistics())
 }
 
 module.exports = statisticsRoutes

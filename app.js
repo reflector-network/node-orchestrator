@@ -1,3 +1,4 @@
+const logger = require('./logger')
 const {connect, disconnect} = require('./persistence-layer/index')
 
 /**
@@ -18,19 +19,19 @@ async function init(container) {
 
     function shutdown(code = 0) {
 
-        console.info('Received kill signal, code = ' + code)
+        logger.info('Received kill signal, code = ' + code)
 
-        console.info('Closing server.')
+        logger.info('Closing server.')
 
         container.server.close()
 
-        console.info('Server closed.')
+        logger.info('Server closed.')
 
-        console.info('Disconnecting from database.')
+        logger.info('Disconnecting from database.')
 
         disconnect()
 
-        console.info('Disconnected from database.')
+        logger.info('Disconnected from database.')
 
         process.exit(code)
 
@@ -40,8 +41,8 @@ async function init(container) {
 
     try {
         process.on('unhandledRejection', (reason, p) => {
-            console.error('Unhandled Rejection at: Promise')
-            console.error(reason)
+            logger.error('Unhandled Rejection at: Promise')
+            logger.error(reason)
         })
 
         process.on('SIGINT', () => {
@@ -54,7 +55,7 @@ async function init(container) {
 
         return container.server
     } catch (e) {
-        console.error(e)
+        logger.error(e)
         shutdown(13)
     }
 }

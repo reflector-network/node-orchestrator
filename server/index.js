@@ -3,7 +3,7 @@ const express = require('express')
 const bodyParser = require('body-parser')
 const {WebSocketServer} = require('ws')
 const {ValidationError} = require('@reflector/reflector-shared')
-const {StrKey} = require('stellar-sdk')
+const {StrKey} = require('@stellar/stellar-sdk')
 const logger = require('../logger')
 const container = require('../domain/container')
 const MessageTypes = require('./ws/handlers/message-types')
@@ -58,7 +58,7 @@ class Server {
                 container.connectionManager.add(connection)
                 logger.debug(`New connection from ${connection.ip || connection.pubkey} established`)
             } catch (e) {
-                console.error(e)
+                logger.error(e)
                 ws.close(1008, e.message)
             }
         })
@@ -67,9 +67,9 @@ class Server {
         this.app.use((err, req, res, next) => {
             if (err) {
                 if (process.env.NODE_ENV === 'test')
-                    console.error(err.message)
+                    logger.error(err.message)
                 else
-                    console.error(err)
+                    logger.error(err)
 
                 if (res.headersSent)
                     return next(err)
@@ -78,7 +78,7 @@ class Server {
                 if (err instanceof HttpError)
                     return res.status(err.code).json({error: err.message, status: err.code})
                 //unhandled error
-                console.error(err)
+                logger.error(err)
                 res.status(500).json({error: 'Internal server error', status: 500})
             }
             res.status((err && err.code) || 500).end()
@@ -91,22 +91,22 @@ class Server {
         this.server = http.createServer(this.app)
 
         this.server.listen(this.port)
-        this.server.on('listening', () => console.log('Http server listening on ' + this.server.address().address + ':' + this.port))
+        this.server.on('listening', () => logger.info('Http server listening on ' + this.server.address().address + ':' + this.port))
         this.server.on('error', (error) => {
             if (error.syscall !== 'listen')
                 throw error
             const bind = typeof this.port === 'string' ? 'Pipe ' + this.port : 'Port ' + this.port
             switch (error.code) {
                 case 'EACCES': {
-                    console.error(bind + ' requires elevated privileges')
+                    logger.error(bind + ' requires elevated privileges')
                     break
                 }
                 case 'EADDRINUSE': {
-                    console.error(bind + ' is already in use')
+                    logger.error(bind + ' is already in use')
                     break
                 }
                 default:
-                    console.error(error)
+                    logger.error(error)
             }
             throw error
         })

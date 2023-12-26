@@ -1,4 +1,4 @@
-const {Keypair} = require('stellar-sdk')
+const {Keypair} = require('@stellar/stellar-sdk')
 const BaseHandler = require('./base-handler')
 
 class HandshakeResponseHandler extends BaseHandler {

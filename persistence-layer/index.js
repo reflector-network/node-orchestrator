@@ -1,4 +1,5 @@
 const mongoose = require('mongoose')
+const logger = require('../logger')
 
 /**
  * @type {mongoose.Mongoose}
@@ -21,9 +22,9 @@ async function connect(connectionString) {
         const {auth} = db.options
         const target = `${auth ? auth.user + '@' : ''}${db.databaseName}`
 
-        console.log('Connected to database ' + target)
+        logger.info('Connected to database ' + target)
     } catch (e) {
-        console.error(e)
+        logger.error(e)
     }
 }
 

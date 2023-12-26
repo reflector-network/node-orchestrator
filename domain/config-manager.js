@@ -55,6 +55,7 @@ class ConfigItem {
         this.status = rawEnvelope.status
         this.id = rawEnvelope.id
         this.description = rawEnvelope.description
+        this.txHash = rawEnvelope.txHash
     }
 
     /**
@@ -82,6 +83,11 @@ class ConfigItem {
      */
     id = null
 
+    /**
+     * @type {string}
+     */
+    txHash = null
+
     toPlainObject() {
         return sortObjectKeys({
             ...this.envelope.toPlainObject(),
@@ -89,7 +95,8 @@ class ConfigItem {
             initiator: this.envelope.signatures[0].pubkey,
             description: this.description,
             expirationDate: this.expirationDate,
-            status: this.status
+            status: this.status,
+            txHash: this.txHash
         })
     }
 }
@@ -188,7 +195,7 @@ class ConfigManager {
                 !__currentConfig
             )
             updateItems(this.allNodePubkeys())
-            notificationProvider.notify({type: 'config-updated', data: resultConfig.toPlainObject()})
+            notificationProvider.notify({type: 'config-updated', data: cleanupConfig(resultConfig.toPlainObject())})
             return
         }
 
@@ -205,7 +212,7 @@ class ConfigManager {
         __pendingConfig = await createConfig(configItem, this.allNodePubkeys().length, !__currentConfig)
 
         updateItems(this.allNodePubkeys())
-        notificationProvider.notify({type: 'config-created', data: configItem.toPlainObject()})
+        notificationProvider.notify({type: 'config-created', data: cleanupConfig(configItem.toPlainObject())}, ChannelTypes.ANON)
 
     }
     /**
@@ -230,8 +237,8 @@ class ConfigManager {
      * @returns {string[]} - The node pubkeys
      */
     allNodePubkeys() {
-        if (this.currentConfig)
-            return this.currentConfig?.config.nodes.map(n => n.pubkey)
+        if (__currentConfig)
+            return [...__currentConfig.envelope.config.nodes.keys()]
         return __defaultNodes
     }
     notifyNodeAboutUpdate(pubkey) {
@@ -260,7 +267,7 @@ async function notifyNodesAboutConfig() {
 
 async function notifyNodeAboutUpdate(pubkey) {
     try {
-        await notificationProvider.notify(getConfigMessage(), ChannelTypes.INCOMING, pubkey)
+        await notificationProvider.notifyNode(getConfigMessage(), pubkey)
     } catch (error) {
         logger.error(`Error while notifying node ${pubkey} about config update`)
         logger.error(error)
@@ -312,10 +319,11 @@ async function processPendingConfig(configManager) {
         const now = Date.now()
         if (!__pendingConfig)
             return
-        if (__pendingConfig.expirationDate < now) {
-            switch (__pendingConfig.status) {
-                case ConfigStatus.VOTING:
-                    { //reject expired voting updates
+        switch (__pendingConfig.status) {
+            case ConfigStatus.VOTING:
+                {
+                    if (__pendingConfig.expirationDate < now) {
+                        //reject expired voting updates
                         await ConfigEnvelopeModel.findOneAndUpdate(
                             {_id: __pendingConfig.id},
                             {status: ConfigStatus.REJECTED},
@@ -323,45 +331,44 @@ async function processPendingConfig(configManager) {
                         ).exec()
                         __pendingConfig.status = ConfigStatus.REJECTED
                     }
-                    break
-                case ConfigStatus.PENDING: //try to apply expired pending updates
-                    if (__pendingConfig.envelope.timestamp > now) {
-                        timeout = __pendingConfig.envelope.timestamp - now
-                        return
-                    }
-                    if (__pendingConfig.txHash) { //if now txHash, than tx is not required for update, so just change status
-                        const txResponse = await getUpdateTx(__pendingConfig.txHash)
-                        if (!txResponse?.successful)
-                            return
-                    }
-                    if (__currentConfig) {
-                        const session = await mongoose.startSession()
-                        session.startTransaction()
-                        try {
-                            await ConfigEnvelopeModel.findByIdAndUpdate({_id: __currentConfig.id}, {status: ConfigStatus.REPLACED}).exec()
-                            await ConfigEnvelopeModel.findByIdAndUpdate({_id: __pendingConfig.id}, {status: ConfigStatus.APPLIED}).exec()
-                            await session.commitTransaction()
-                            __pendingConfig.status = ConfigStatus.APPLIED
-                        } catch (error) {
-                            await session.abortTransaction()
-                            throw error
-                        } finally {
-                            await session.endSession()
-                        }
-                    }
-                    break
-                default: {
-                    console.error('Unexpected status:', __pendingConfig.status)
+                }
+                break
+            case ConfigStatus.PENDING: //try to apply expired pending updates
+                if (__pendingConfig.envelope.timestamp > now) {
+                    timeout = __pendingConfig.envelope.timestamp - now
                     return
                 }
+                if (__pendingConfig.txHash) { //if now txHash, than tx is not required for update, so just change status
+                    const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
+                    if (txResponse?.status !== 'SUCCESS')
+                        return
+                }
+                if (__currentConfig) {
+                    const session = await mongoose.startSession()
+                    session.startTransaction()
+                    try {
+                        await ConfigEnvelopeModel.findByIdAndUpdate({_id: __currentConfig.id}, {status: ConfigStatus.REPLACED}).exec()
+                        await ConfigEnvelopeModel.findByIdAndUpdate({_id: __pendingConfig.id}, {status: ConfigStatus.APPLIED}).exec()
+                        await session.commitTransaction()
+                        __pendingConfig.status = ConfigStatus.APPLIED
+                    } catch (error) {
+                        await session.abortTransaction()
+                        throw error
+                    } finally {
+                        await session.endSession()
+                    }
+                }
+                break
+            default: {
+                return
             }
-            updateItems(configManager.allNodePubkeys())
-            notificationProvider.notify({type: 'update', data: __pendingConfig.toPlainObject()})
         }
+        updateItems(configManager.allNodePubkeys())
+        notificationProvider.notify({type: 'update', data: cleanupConfig(__currentConfig.toPlainObject())}, ChannelTypes.ANON)
     } catch (error) {
-        console.error(error)
+        logger.error(error)
     } finally {
-        setTimeout(processPendingConfig, timeout)
+        setTimeout(() => processPendingConfig(configManager), timeout)
     }
 }
 

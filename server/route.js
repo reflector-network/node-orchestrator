@@ -1,3 +1,4 @@
+const AuthMode = require('./auth-mode')
 const {authenticate, corsMiddleware, mightAuthenticate} = require('./middlewares')
 
 /**
@@ -20,15 +21,21 @@ function registerRoute(app, route, options, handler) {
         cors = 'whitelist',
         headers,
         middleware = [],
-        allowAnonymous = false
+        authMode = AuthMode.auth
     } = options
 
     let prettyPrint = false
 
-    if (!allowAnonymous)
-        middleware.unshift(authenticate)
-    else
-        middleware.unshift(mightAuthenticate)
+    switch (authMode) {
+        case AuthMode.auth:
+            middleware.unshift(authenticate)
+            break
+        case AuthMode.mightAuth:
+            middleware.unshift(mightAuthenticate)
+            break
+        default:
+            break
+    }
     middleware.unshift(corsMiddleware[cors])
 
     app[method](prefix + route, middleware, function (req, res, next) {
