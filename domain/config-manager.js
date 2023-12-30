@@ -190,7 +190,6 @@ class ConfigManager {
                 configToModify,
                 signatureIndex,
                 rawConfigEnvelope.signatures[0],
-                true,
                 this.allNodePubkeys().length,
                 !__currentConfig
             )
@@ -200,9 +199,11 @@ class ConfigManager {
         }
 
         //no configToModify, create new config
-        if (config.expirationDate < Date.now() + minExpirationDatePeriod)
+        if (!configItem.expirationDate)
+            throw new ValidationError('Expiration date is not defined')
+        if (configItem.expirationDate < Date.now() + minExpirationDatePeriod)
             throw new ValidationError('Pending config already expired')
-        if (config.expirationDate <= config.minDate)
+        if (configItem.expirationDate <= config.minDate)
             throw new ValidationError('Config min date cannot be less than expiration date')
         if (__currentConfig && buildUpdates(1n, __currentConfig.envelope.config, config).size === 0)
             throw new ValidationError('Config doesn\'t have any changes')
@@ -217,20 +218,10 @@ class ConfigManager {
     }
     /**
      * @param {string} pubkey - The public key of the node
-     * @returns {Node}
-     */
-    getNode(pubkey) {
-        if (__currentConfig)
-            return __currentConfig?.envelope.config.nodes.get(pubkey)
-        return __defaultNodes.find(n => n === pubkey)
-    }
-    /**
-     * @param {string} pubkey - The public key of the node
      * @returns {boolean}
      */
     hasNode(pubkey) {
-        const node = this.getNode(pubkey)
-        return !!node
+        return this.allNodePubkeys().includes(pubkey)
     }
     /**
      * Returns all nodes pubkeys
@@ -403,11 +394,11 @@ function getConfigToModify(configItem) {
  * @param {ConfigItem} configItem
  */
 async function getPendingConfigData(configItem) {
-    let timestamp = 0
+    let timestamp = configItem.envelope.timestamp
     if (configItem.envelope.timestamp === 0) {
         //get timestamp for pending config
         const minDate = Math.max(configItem.envelope.config.minDate || Date.now())
-        timestamp = normalizeTimestamp(minDate + hourPeriod * 2, hourPeriod)
+        timestamp = minDate + 1000 * 60 * 5 //normalizeTimestamp(minDate + hourPeriod * 2, hourPeriod)
     }
     //get txHash for pending config
     const txHash = __currentConfig ? (await getUpdateTxHash(__currentConfig.envelope.config, configItem.envelope.config, timestamp)) : null

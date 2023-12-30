@@ -46,9 +46,9 @@ async function getStatistics() {
 }
 
 function addStatistics(statisticsData) {
-    statistics.push(statisticsData)
+    statistics.unshift(statisticsData)
     if (statistics.length > 100)
-        statistics.shift()
+        statistics.pop()
 }
 
 /**

@@ -50,6 +50,8 @@ class Server {
                 if (pubkey) {
                     if (!StrKey.isValidEd25519PublicKey(pubkey))
                         throw new Error('pubkey is invalid')
+                    if (!container.configManager.hasNode(pubkey))
+                        throw new Error('pubkey is not registered')
                     connection = new IncomingChannel(ws, pubkey, app === 'node')
                     await connection.send({type: MessageTypes.HANDSHAKE_REQUEST, data: {payload: connection.authPayload}})
                 } else {
