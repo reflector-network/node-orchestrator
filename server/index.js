@@ -14,6 +14,7 @@ const IncomingChannel = require('./ws/incoming-channel')
 const AnonIncomingChannel = require('./ws/anon-incoming-channel')
 const ChannelTypes = require('./ws/channel-types')
 const statisticsRoutes = require('./routes/statistics-routes')
+const logRoutes = require('./routes/log-routes')
 
 function normalizePort(val) {
     const port = parseInt(val, 10)
@@ -40,6 +41,7 @@ class Server {
         registerSwaggerRoute(this.app)
         configRoutes(this.app)
         statisticsRoutes(this.app)
+        logRoutes(this.app)
 
         const wss = new WebSocketServer({noServer: true})
 
