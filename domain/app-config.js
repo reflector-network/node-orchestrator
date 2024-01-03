@@ -1,3 +1,5 @@
+const {StrKey} = require('@stellar/stellar-sdk')
+
 class AppConfig {
     constructor(rawConfig) {
         if (!rawConfig)
@@ -49,6 +51,10 @@ class AppConfig {
             throw new Error('defaultNodes is not an array')
         if (defaultNodes.length === 0)
             throw new Error('defaultNodes is empty')
+        for (const node of defaultNodes) {
+            if (!StrKey.isValidEd25519PublicKey(node))
+                throw new Error('invalid node public key')
+        }
         this.defaultNodes = defaultNodes
     }
 

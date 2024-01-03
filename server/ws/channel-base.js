@@ -113,7 +113,6 @@ class ChannelBase {
             }
         }
         this.__isValidated = false
-        contrainer.connectionManager.remove(this.id)
     }
 
     /**
@@ -182,6 +181,7 @@ class ChannelBase {
             this.__ws.terminate()
             this.__ws = null
             this.__isValidated = false
+            contrainer.connectionManager.remove(this.id)
         }
         logger.debug(`${this.__getConnectionInfo()} closed with code ${code} and reason ${reason}`)
     }

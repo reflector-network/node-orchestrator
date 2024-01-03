@@ -3,7 +3,6 @@ const {
     buildUpdates,
     verifySignature,
     ValidationError,
-    normalizeTimestamp,
     sortObjectKeys
 } = require('@reflector/reflector-shared')
 const mongoose = require('mongoose')
@@ -398,7 +397,7 @@ async function getPendingConfigData(configItem) {
     if (configItem.envelope.timestamp === 0) {
         //get timestamp for pending config
         const minDate = Math.max(configItem.envelope.config.minDate || Date.now())
-        timestamp = minDate + 1000 * 60 * 5 //normalizeTimestamp(minDate + hourPeriod * 2, hourPeriod)
+        timestamp = minDate + 1000 * 60 * 10 //10 minutes
     }
     //get txHash for pending config
     const txHash = __currentConfig ? (await getUpdateTxHash(__currentConfig.envelope.config, configItem.envelope.config, timestamp)) : null
@@ -424,15 +423,17 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
         update = {$push: {signatures: signature}}
         signatures.push(signature)
     }
-    //compute status and add to update if changed
-    const currentStatus = computeUpdateStatus(signatures, nodesCount, isInitConfig)
-    if (configItem.status !== currentStatus) {
-        update.$set = update.$set || {}
-        update.$set.status = currentStatus
-        if (currentStatus === ConfigStatus.PENDING) {
-            const {timestamp, txHash} = await getPendingConfigData(configItem)
-            update.$set.timestamp = timestamp
-            update.$set.txHash = txHash
+    if (configItem.status !== ConfigStatus.APPLIED) { //only update status if config is not applied
+        //compute status and add to update if changed
+        const currentStatus = computeUpdateStatus(signatures, nodesCount, isInitConfig)
+        if (configItem.status !== currentStatus) {
+            update.$set = update.$set || {}
+            update.$set.status = currentStatus
+            if (currentStatus === ConfigStatus.PENDING) {
+                const {timestamp, txHash} = await getPendingConfigData(configItem)
+                update.$set.timestamp = timestamp
+                update.$set.txHash = txHash
+            }
         }
     }
 
@@ -448,7 +449,8 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
     configItem.status = updatedDoc.status
     configItem.envelope.signatures = updatedEnvelope.signatures
     configItem.envelope.timestamp = updatedEnvelope.timestamp
-    configItem.txHash = updatedEnvelope.txHash
+    if (updatedDoc.txHash)
+        configItem.txHash = updatedDoc.txHash
 
     return configItem
 }
