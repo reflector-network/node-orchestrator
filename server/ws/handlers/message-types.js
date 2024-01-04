@@ -9,7 +9,9 @@ const MessageTypes = {
     HANDSHAKE_RESPONSE: 1,
     CONFIG: 3,
     STATISTICS_REQUEST: 20,
-    STATISTICS: 21,
+    SET_TRACE: 22,
+    LOGS_REQUEST: 23,
+    LOG_FILE_REQUEST: 24,
     OK: 200
 }
 

@@ -76,7 +76,7 @@ class ChannelBase {
                     const error = new Error('Request timed out')
                     error.timeout = true
                     reject(error)
-                }, 5000)
+                }, 5000000)
                 this.__requests[message.requestId] = {
                     resolve,
                     reject,
@@ -144,17 +144,22 @@ class ChannelBase {
                 && [MessageTypes.ERROR, MessageTypes.OK].indexOf(message.type) === -1
             ) //message requires handling
                 try {
-                    result = await contrainer.handlersManager.handle(this, message) || {type: MessageTypes.OK}
+                    result = await contrainer.handlersManager.handle(this, message) || {type: MessageTypes.OK, responseId: message.requestId}
                 } catch (e) {
                     logger.debug(e)
                     result = {
+                        type: MessageTypes.ERROR,
                         error: e.message,
                         responseId: message.requestId
                     }
                 }
+            else
+                result = message
             if (message.requestId) { //message requires response
                 if (!result)
                     result = {type: MessageTypes.ERROR, error: 'No response'}
+                else if (result.type === undefined)
+                    result = {type: MessageTypes.OK, data: result}
                 result.responseId = message.requestId
                 await this.send(result)
                 return
@@ -167,7 +172,7 @@ class ChannelBase {
                     if (message.type === MessageTypes.ERROR)
                         request.reject(new Error(message.error))
                     else
-                        request.resolve(result) //resolve the promise with the result
+                        request.resolve(result.data) //resolve the promise with the result
                 }
             }
         } catch (e) {

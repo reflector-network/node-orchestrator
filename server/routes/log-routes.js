@@ -30,7 +30,13 @@ function logRoutes(app) {
      *             schema:
      *               $ref: '#/components/schemas/OkResult'
      */
-    registerRoute(app, 'logs/trace', {method: 'post', authMode: AuthMode.noAuth}, () => ({ok: 1}))
+    registerRoute(app, 'logs/trace', {method: 'post'}, async (req) => {
+        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        if (!node)
+            throw new Error('Node not found')
+        const {isTraceEnabled} = req.body
+        await node.send({type: MessageTypes.SET_TRACE, data: {isTraceEnabled}})
+    })
 
 
     /**
@@ -53,7 +59,13 @@ function logRoutes(app) {
      *                 type: string
      *
      */
-    registerRoute(app, 'logs', {authMode: AuthMode.noAuth}, () => ['error.log', 'combined.log'])
+    registerRoute(app, 'logs', {}, async (req) => {
+        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        if (!node)
+            throw new Error('Node not found')
+        const logs = await node.send({type: MessageTypes.LOGS_REQUEST})
+        return logs
+    })
 
 
     /**
@@ -82,14 +94,18 @@ function logRoutes(app) {
      *                 type: string
      *
      */
-    registerRoute(app, 'log/:logname', {authMode: AuthMode.noAuth}, (req, res) => {
-        const filename = req.params.logname
+    registerRoute(app, 'logs/:logname', {}, async (req, res) => {
+        const logFileName = req.params.logname
+
+        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        if (!node)
+            throw new Error('Node not found')
+        const logData = await node.send({type: MessageTypes.LOG_FILE_REQUEST, data: {logFileName}})
         //Set headers
-        res.setHeader('Content-Disposition', 'attachment; filename=' + filename)
+        res.setHeader('Content-Disposition', 'attachment; filename=' + logFileName)
         res.setHeader('Content-Type', 'application/octet-stream')
         //Send file
-        const testData = 'test data'
-        res.send(testData)
+        return logData
     })
 }
 
