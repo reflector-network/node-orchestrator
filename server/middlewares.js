@@ -31,7 +31,13 @@ async function validateAuth(req) {
     const method = req.method.toUpperCase()
     let payload = null
     if (method === 'GET') {
-        let path = req.originalUrl
+        let path = req.route.path
+        if (req.params) {
+            const props = Object.getOwnPropertyNames(req.params)
+            for (const prop of props) {
+                path = path.replace(`:${prop}`, req.params[prop])
+            }
+        }
         if (path.startsWith('/'))
             path = path.substring(1)
         payload = path + '?' + new URLSearchParams(sortObjectKeys({...req.query, nonce})).toString()
