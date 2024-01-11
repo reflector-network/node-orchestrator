@@ -29,6 +29,7 @@ async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
     })
     if (!tx)
         return null
+    logger.info(`Update tx: ${tx.transaction.toXDR()}`)
     return tx.hashHex
 }
 

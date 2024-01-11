@@ -1,7 +1,6 @@
 const {createHash} = require('crypto')
 const cors = require('cors')
 const {Keypair} = require('@stellar/stellar-sdk')
-//const { corsWhitelist } = require('../config')
 const {sortObjectKeys} = require('@reflector/reflector-shared')
 const container = require('../domain/container')
 const nonceProvider = require('../domain/nonce-provider')
@@ -69,7 +68,6 @@ async function authenticate(req, res, next) {
 
 const mightAuthenticate = async (req, res, next) => {
     try {
-
         const {authorization} = req.headers
         if (authorization)
             await validateAuth(req)
@@ -83,12 +81,11 @@ const defaultCorsOptions = {
     optionsSuccessStatus: 200
 }
 
-const corsWhitelist = ['*']
-
 const corsMiddleware = {
     whitelist: cors({
         ...defaultCorsOptions,
         origin(origin, callback) {
+            const corsWhitelist = container.appConfig.whitelist || []
             if (!origin) return callback(null, true)
             if (corsWhitelist.includes(origin) || corsWhitelist.includes('*')) {
                 callback(null, true)

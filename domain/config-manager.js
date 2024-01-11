@@ -128,12 +128,14 @@ class ConfigManager {
 
     /**
      * @param {boolean} onlyPublicFields - Flag to return only public fields
-     * @returns {{currentConfig: {config: ConfigEnvelopeDto, hash: string}, pendingConfig: {config: ConfigEnvelopeDto, hash: string}}} - The current configs
+     * @returns {{currentConfig: {config: ConfigEnvelopeDto, hash: string}, pendingConfig: {config: ConfigEnvelopeDto, hash: string}}|{any}} - The current configs
      */
     getCurrentConfigs(onlyPublicFields) {
+        if (onlyPublicFields)
+            return cleanupConfig(__currentConfig?.toPlainObject())?.config
         return {
-            currentConfig: getConfigForClient(__currentConfig, onlyPublicFields),
-            pendingConfig: getConfigForClient(__pendingConfig, onlyPublicFields)
+            currentConfig: getConfigForClient(__currentConfig),
+            pendingConfig: getConfigForClient(__pendingConfig)
         }
     }
     /**
@@ -477,23 +479,23 @@ async function createConfig(configItem, nodesCount, isInitConfig) {
 }
 
 function cleanupConfig(config) {
+    if (!config)
+        return null
     for (const [, node] of Object.entries(config.config.nodes)) {
         delete node.url
     }
     delete config.config.wasmHash
+    return config
 }
 
 /**
  * @param {ConfigItem} configItem
- * @param {boolean} onlyPublicFields
  * @returns {{config: ConfigEnvelopeDto, hash: string}}
  */
-function getConfigForClient(configItem, onlyPublicFields) {
+function getConfigForClient(configItem) {
     const config = configItem?.toPlainObject()
     if (!config)
         return null
-    if (onlyPublicFields)
-        cleanupConfig(config)
     return {
         config,
         hash: configItem?.envelope.config.getHash()

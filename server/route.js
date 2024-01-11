@@ -50,7 +50,7 @@ function registerRoute(app, route, options, handler) {
 }
 
 function processResponse(res, promise, headers, prettyPrint = false, next) {
-    if (typeof promise.then !== 'function') {
+    if (typeof promise?.then !== 'function') {
         promise = Promise.resolve(promise)
     }
     promise
