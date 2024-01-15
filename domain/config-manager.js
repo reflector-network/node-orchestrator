@@ -195,7 +195,7 @@ class ConfigManager {
                 !__currentConfig
             )
             updateItems(this.allNodePubkeys())
-            notificationProvider.notify({type: 'config-updated', data: cleanupConfig(resultConfig.toPlainObject())})
+            notificationProvider.notify({type: 'config-updated', data: cleanupConfig(resultConfig.toPlainObject())}, ChannelTypes.ANON)
             return
         }
 
@@ -286,7 +286,7 @@ async function updateItems(allNodePubkeys) {
         case ConfigStatus.PENDING:
             break
         default:
-            return
+            break
     }
     await notifyNodesAboutConfig()
 }
