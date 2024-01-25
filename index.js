@@ -7,6 +7,7 @@ const HandlersManager = require('./server/ws/handlers/handlers-manager')
 const StatisticsManager = require('./domain/statistics-manager')
 const Server = require('./server')
 const ConnectionManager = require('./domain/connections-manager')
+const NodeSettingsManager = require('./domain/node-settings-manager')
 
 try {
     if (!fs.existsSync('./home/app.config.json'))
@@ -20,6 +21,7 @@ try {
     container.handlersManager = new HandlersManager()
     container.statisticsManager = new StatisticsManager()
     container.connectionManager = new ConnectionManager()
+    container.nodeSettingsManager = new NodeSettingsManager()
     container.server = new Server()
 
     require('./app')(container)

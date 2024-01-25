@@ -8,6 +8,7 @@
  */
 
 const packageInfo = require('../package.json')
+const NodeSettingsManager = require('./node-settings-manager')
 
 class Container {
     /**
@@ -34,6 +35,12 @@ class Container {
      * @type {ConnectionManager}
      */
     connectionManager
+
+
+    /**
+     * @type {NodeSettingsManager}
+     */
+    nodeSettingsManager
 
     /**
      * @type {AppConfig}

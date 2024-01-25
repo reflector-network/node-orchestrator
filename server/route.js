@@ -12,6 +12,7 @@ const {authenticate, corsMiddleware, mightAuthenticate} = require('./middlewares
  * @param {object} [options.headers] - Additional response headers. Default: {}
  * @param {boolean} [options.prettyPrint] - Pretty-print JSON
  * @param {[function]} [options.middleware] - Request middleware to use
+ * @param {AuthMode} [options.authMode] - Authentication mode. Default: AuthMode.auth
  * @param {routeHandler} handler - Request handler
  */
 function registerRoute(app, route, options, handler) {

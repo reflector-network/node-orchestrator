@@ -7,6 +7,7 @@ const {connect, dropDatabase} = require('../persistence-layer')
 const HandlersManager = require('../server/ws/handlers/handlers-manager')
 const StatisticsManager = require('../domain/statistics-manager')
 const ConnectionManager = require('../domain/connections-manager')
+const NodeSettingsManager = require('../domain/node-settings-manager')
 const constants = require('./constants')
 
 const configManager = new ConfigManager()
@@ -18,6 +19,7 @@ beforeAll(async () => {
     container.handlersManager = new HandlersManager()
     container.statisticsManager = new StatisticsManager()
     container.connectionManager = new ConnectionManager()
+    container.nodeSettingsManager = new NodeSettingsManager()
 
     const appConfig = new AppConfig(constants)
     await connect(appConfig.dbConnectionString)

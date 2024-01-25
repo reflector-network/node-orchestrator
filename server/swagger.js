@@ -206,6 +206,17 @@ const globalSwaggerConfig = {
                         type: 'integer'
                     }
                 }
+            },
+            NodeSettings: {
+                type: 'object',
+                properties: {
+                    emails: {
+                        type: 'array',
+                        items: {
+                            type: 'string'
+                        }
+                    }
+                }
             }
         }
     },

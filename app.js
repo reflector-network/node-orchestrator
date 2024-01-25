@@ -15,6 +15,8 @@ async function init(container) {
 
     await container.configManager.init(container.appConfig.defaultNodes)
 
+    await container.nodeSettingsManager.init()
+
     container.server.init(container.appConfig.port)
 
     function shutdown(code = 0) {
