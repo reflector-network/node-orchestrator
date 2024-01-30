@@ -236,6 +236,9 @@ class ConfigManager {
     notifyNodeAboutUpdate(pubkey) {
         notifyNodeAboutUpdate(pubkey)
     }
+    getConfigMessage() {
+        return getConfigMessage()
+    }
 }
 
 function getConfigMessage() {
@@ -243,7 +246,9 @@ function getConfigMessage() {
         type: MessageTypes.CONFIG,
         data: {
             currentConfig: __currentConfig?.envelope.toPlainObject(),
-            pendingConfig: __pendingConfig?.envelope.toPlainObject()
+            pendingConfig: __pendingConfig && __pendingConfig.status !== ConfigStatus.PENDING
+                ? undefined
+                : __pendingConfig?.envelope.toPlainObject()
         }
     }
 }
@@ -356,7 +361,8 @@ async function processPendingConfig(configManager) {
             }
         }
         updateItems(configManager.allNodePubkeys())
-        notificationProvider.notify({type: 'update', data: cleanupConfig(__currentConfig.toPlainObject())}, ChannelTypes.ANON)
+        if (__currentConfig)
+            notificationProvider.notify({type: 'update', data: cleanupConfig(__currentConfig.toPlainObject())}, ChannelTypes.ANON)
     } catch (error) {
         logger.error(error)
     } finally {
