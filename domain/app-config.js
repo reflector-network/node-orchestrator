@@ -1,4 +1,5 @@
 const {StrKey} = require('@stellar/stellar-sdk')
+const {mailRegex} = require('./utils')
 
 class AppConfig {
     constructor(rawConfig) {
@@ -17,6 +18,7 @@ class AppConfig {
             this.whitelist = rawConfig.whitelist
         this.__assignDefaultNodes(rawConfig.defaultNodes)
         this.__assignNetworks(rawConfig.networks)
+        this.__assignMailConfig(rawConfig.mailApiKey, rawConfig.mailFrom)
     }
 
     /**
@@ -43,6 +45,16 @@ class AppConfig {
      * @type {string[]}
      */
     defaultNodes = []
+
+    /**
+     * @type {string}
+     */
+    mailApiKey = null
+
+    /**
+     * @type {string}
+     */
+    mailFrom = null
 
     __assignDefaultNodes(defaultNodes) {
         if (!defaultNodes)
@@ -86,6 +98,15 @@ class AppConfig {
         if (!this.networks.has(network))
             throw new Error(`Unsupported network: ${network}`)
         return this.networks.get(network)
+    }
+
+    __assignMailConfig(apiKey, from) {
+        if (!apiKey)
+            throw new Error('mailApiKey is undefined')
+        if (!from || !mailRegex.test(from))
+            throw new Error('mailFrom is undefined')
+        this.mailApiKey = apiKey
+        this.mailFrom = from
     }
 }
 

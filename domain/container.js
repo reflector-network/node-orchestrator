@@ -5,10 +5,11 @@
  * @typedef {import('./statistics-manager')} StatisticsManager
  * @typedef {import('./connections-manager')} ConnectionManager
  * @typedef {import('./app-config')} AppConfig
+ * @typedef {import('./mail-provider')} MailProvider
+ * @typedef {import('./node-settings-manager')} NodeSettingsManager
  */
 
 const packageInfo = require('../package.json')
-const NodeSettingsManager = require('./node-settings-manager')
 
 class Container {
     /**
@@ -41,6 +42,11 @@ class Container {
      * @type {NodeSettingsManager}
      */
     nodeSettingsManager
+
+    /**
+     * @type {MailProvider}
+     */
+    mailProvider
 
     /**
      * @type {AppConfig}

@@ -1,4 +1,6 @@
+const {ValidationError} = require('@reflector/reflector-shared')
 const NodeSettings = require('../persistence-layer/models/node-settings')
+const {mailRegex} = require('./utils')
 
 class NodeSettingsManager {
     async init() {
@@ -11,6 +13,12 @@ class NodeSettingsManager {
     }
 
     async update(pubkey, settings) {
+        const emails = {settings}
+        for (const email of emails) {
+            if (!mailRegex.test(email)) {
+                throw new ValidationError('Invalid email')
+            }
+        }
         const settingsModel = await NodeSettings.findByIdAndUpdate(
             pubkey,
             {$set: {settings}},

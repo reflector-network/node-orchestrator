@@ -283,7 +283,6 @@ async function updateItems(allNodePubkeys) {
             //close all connections for removed nodes
             getRemovedNodes(allNodePubkeys).forEach(pubkey => {
                 container.connectionManager.removeByPubkey(pubkey)
-                container.statisticsManager.removePubkeys([pubkey])
             })
             __currentConfig = __pendingConfig
             __pendingConfig = null

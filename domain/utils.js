@@ -16,6 +16,9 @@ function computeUpdateStatus(signatures, totalNodesCount, isInitConfig = false) 
     return ConfigStatus.VOTING
 }
 
+const mailRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]+$/
+
 module.exports = {
-    computeUpdateStatus
+    computeUpdateStatus,
+    mailRegex
 }
