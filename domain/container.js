@@ -5,7 +5,7 @@
  * @typedef {import('./statistics-manager')} StatisticsManager
  * @typedef {import('./connections-manager')} ConnectionManager
  * @typedef {import('./app-config')} AppConfig
- * @typedef {import('./mail-provider')} MailProvider
+ * @typedef {import('./email-provider')} EmailProvider
  * @typedef {import('./node-settings-manager')} NodeSettingsManager
  */
 
@@ -44,9 +44,9 @@ class Container {
     nodeSettingsManager
 
     /**
-     * @type {MailProvider}
+     * @type {EmailProvider}
      */
-    mailProvider
+    emailProvider
 
     /**
      * @type {AppConfig}

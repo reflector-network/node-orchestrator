@@ -152,6 +152,11 @@ const constatns = {
             }
             return nodes
         }, {})
+    },
+    "emailSettings": {
+        "apiKey": "apiKey",
+        "from":"orchestrator@refelector.world",
+        "domain": "domain.com"
     }
 }
 

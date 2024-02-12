@@ -1,6 +1,8 @@
 const {ValidationError} = require('@reflector/reflector-shared')
 const NodeSettings = require('../persistence-layer/models/node-settings')
+const logger = require('../logger')
 const {mailRegex} = require('./utils')
+const container = require('./container')
 
 class NodeSettingsManager {
     async init() {
@@ -13,12 +15,24 @@ class NodeSettingsManager {
     }
 
     async update(pubkey, settings) {
-        const emails = {settings}
+        const {emails} = settings
+        if ((new Set(emails)).size !== emails.length) {
+            throw new ValidationError('Duplicate emails')
+        }
         for (const email of emails) {
             if (!mailRegex.test(email)) {
                 throw new ValidationError('Invalid email')
             }
         }
+
+        try {
+            await container.emailProvider.registerUsers(emails)
+        } catch (e) {
+            logger.error('Error registering emails')
+            logger.error(e)
+            throw new ValidationError('Unable to register emails.')
+        }
+
         const settingsModel = await NodeSettings.findByIdAndUpdate(
             pubkey,
             {$set: {settings}},

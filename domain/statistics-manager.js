@@ -100,7 +100,7 @@ function collectIssues(nodeStatistics, configData) {
         const statistics = nodeStatistics[pubkey]
         const issues = {}
         if (!statistics) {
-            nodeIssues[pubkey] = {[issueTypes.NODE_UNAVAILABLE]: new NodeIssueItem(issueTypes.NODE_UNAVAILABLE, 'Node is unavailable', now)}
+            nodeIssues[pubkey] = {[issueTypes.NODE_UNAVAILABLE]: new NodeIssueItem(issueTypes.NODE_UNAVAILABLE, 'Node server is unavailable', now)}
             continue
         }
         if (statistics.connectionIssues && statistics.connectionIssues.length > 0) {
@@ -191,7 +191,7 @@ function processIssues() {
             }
         }
         if (notificationsToSend.length > 0) {
-            container.mailProvider.sendToPubkey(pubkey, 'Node issues', notificationsToSend.map(i => i.message).join('\n'))
+            container.emailProvider.sendToPubkey(pubkey, `Node ${pubkey} issues`, `<html><body><h1>Node issues<h1><hr/>${issuesToHtml(notificationsToSend.map(i => i.message))}</body></html>`)
                 .then(() => {
                     for (const issue of notificationsToSend) {
                         issue.setNotificationSent()
@@ -202,13 +202,13 @@ function processIssues() {
     }
 
     const notificationsToSend = []
-    for (const issue in issues.clusterIssues) {
+    for (const issue of Object.values(issues.clusterIssues)) {
         if (issue.shouldSend())
             notificationsToSend.push(issue)
     }
 
     if (notificationsToSend.length > 0) {
-        container.mailProvider.sendToAll('Cluster issues', notificationsToSend.map(i => i.message).join('\n'))
+        container.emailProvider.sendToAll('Cluster issues', `<html><body><h1>Cluster issues<h1><hr/>${issuesToHtml(notificationsToSend.map(i => i.message))}</body></html>`)
             .then(() => {
                 for (const issue of notificationsToSend) {
                     issue.setNotificationSent()
@@ -216,6 +216,14 @@ function processIssues() {
             })
             .catch(e => logger.error(`Error sending email to all: ${e.message}`))
     }
+}
+
+function issuesToHtml(issues) {
+    let issuesHtml = ''
+    for (const issue of issues) {
+        issuesHtml += `<h3>${issue}</h3>`
+    }
+    return issuesHtml
 }
 
 class StatisticsManager {

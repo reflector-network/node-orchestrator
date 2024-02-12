@@ -8,7 +8,7 @@ const StatisticsManager = require('./domain/statistics-manager')
 const Server = require('./server')
 const ConnectionManager = require('./domain/connections-manager')
 const NodeSettingsManager = require('./domain/node-settings-manager')
-const MailProvider = require('./domain/mail-provider')
+const EmailProvider = require('./domain/email-provider')
 
 try {
     if (!fs.existsSync('./home/app.config.json'))
@@ -23,7 +23,7 @@ try {
     container.statisticsManager = new StatisticsManager()
     container.connectionManager = new ConnectionManager()
     container.nodeSettingsManager = new NodeSettingsManager()
-    container.mailProvider = new MailProvider(container.appConfig.mailApiKey, container.appConfig.mailFrom)
+    container.emailProvider = new EmailProvider(container.appConfig.emailSettings)
     container.server = new Server()
 
     require('./app')(container)

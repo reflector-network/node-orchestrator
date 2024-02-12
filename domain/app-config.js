@@ -1,6 +1,22 @@
 const {StrKey} = require('@stellar/stellar-sdk')
 const {mailRegex} = require('./utils')
 
+class EmailSettings {
+    constructor(rawSettings) {
+        if (!rawSettings)
+            throw new Error('rawSettings is undefined')
+        if (!rawSettings.apiKey)
+            throw new Error('apiKey is undefined')
+        if (!rawSettings.from || !mailRegex.test(rawSettings.from))
+            throw new Error('from is undefined')
+        if (!rawSettings.appId)
+            throw new Error('appId is undefined')
+        this.apiKey = rawSettings.apiKey
+        this.from = rawSettings.from
+        this.appId = rawSettings.appId
+    }
+}
+
 class AppConfig {
     constructor(rawConfig) {
         if (!rawConfig)
@@ -18,7 +34,7 @@ class AppConfig {
             this.whitelist = rawConfig.whitelist
         this.__assignDefaultNodes(rawConfig.defaultNodes)
         this.__assignNetworks(rawConfig.networks)
-        this.__assignMailConfig(rawConfig.mailApiKey, rawConfig.mailFrom)
+        this.__assignEmailConfig(rawConfig.emailSettings)
     }
 
     /**
@@ -47,14 +63,9 @@ class AppConfig {
     defaultNodes = []
 
     /**
-     * @type {string}
+     * @type {EmailSettings}
      */
-    mailApiKey = null
-
-    /**
-     * @type {string}
-     */
-    mailFrom = null
+    emailSettings = null
 
     __assignDefaultNodes(defaultNodes) {
         if (!defaultNodes)
@@ -100,13 +111,8 @@ class AppConfig {
         return this.networks.get(network)
     }
 
-    __assignMailConfig(apiKey, from) {
-        if (!apiKey)
-            throw new Error('mailApiKey is undefined')
-        if (!from || !mailRegex.test(from))
-            throw new Error('mailFrom is undefined')
-        this.mailApiKey = apiKey
-        this.mailFrom = from
+    __assignEmailConfig(rawEmailSettings) {
+        this.emailSettings = new EmailSettings(rawEmailSettings)
     }
 }
 
