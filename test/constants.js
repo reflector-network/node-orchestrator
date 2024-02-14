@@ -156,7 +156,7 @@ const constatns = {
     "emailSettings": {
         "apiKey": "apiKey",
         "from":"orchestrator@refelector.world",
-        "domain": "domain.com"
+        "appId": "orchestrator"
     }
 }
 
