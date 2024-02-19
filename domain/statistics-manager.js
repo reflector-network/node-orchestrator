@@ -131,14 +131,11 @@ function collectIssues(nodeStatistics, configData) {
 
     const clusterIssues = {}
 
-    for (const oracleId in lastOracleTimestamps) {
-        if (!oracleId)
-            continue
-        const lastOracleTimestampData = lastOracleTimestamps[oracleId]
+    for (const [oracleId, lastOracleTimestamp] of Object.entries(lastOracleTimestamps)) {
         const contractData = configData.currentConfig.config.config.contracts[oracleId]
         if (!contractData)
             continue
-        if (now - lastOracleTimestampData.lastOracleTimestamp > contractData.timeframe * 2) { //if last oracle timestamp is older than 2 timeframes
+        if (now - lastOracleTimestamp > contractData.timeframe * 2) { //if last oracle timestamp is older than 2 timeframes
             clusterIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new NodeIssueItem(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue for oracle ${oracleId}.`, now)}
         }
     }
