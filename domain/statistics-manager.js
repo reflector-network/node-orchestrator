@@ -1,4 +1,5 @@
 /*eslint-disable guard-for-in */
+const {getMajority, hasMajority} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const container = require('./container')
@@ -10,7 +11,8 @@ const issueTypes = {
     WRONG_CONFIG: 'WRONG_CONFIG',
     WRONG_PENDING_CONFIG: 'WRONG_PENDING_CONFIG',
     PRICE_UPDATE_ISSUE: 'PRICE_UPDATE_ISSUE',
-    CLUSTER_UPDATE_ISSUE: 'CLUSTER_UPDATE_ISSUE'
+    CLUSTER_UPDATE_ISSUE: 'CLUSTER_UPDATE_ISSUE',
+    NO_MAJORITY: 'NO_MAJORITY'
 }
 
 class NodeIssueItem {
@@ -32,6 +34,8 @@ class NodeIssueItem {
         switch (this.type) {
             case issueTypes.NODE_UNAVAILABLE:
                 return Date.now() - this.timestamp > __hoursToMs(1) && __shouldSend(6) //if node is unavailable for more than 1 hour
+            case issueTypes.NO_MAJORITY:
+                return Date.now() - this.timestamp > __hoursToMs(.1) && __shouldSend(6) //if no majority for more than 6 minutes
             case issueTypes.PRICE_UPDATE_ISSUE:
             case issueTypes.CLUSTER_UPDATE_ISSUE:
                 return __shouldSend(6)
@@ -83,7 +87,7 @@ async function getStatistics() {
             currentConfigHash: configData.currentConfig?.hash,
             pendingConfigHash: configData.pendingConfig?.hash
         })
-        addIssues(issuesData)
+        addIssues(issuesData, container.configManager.allNodePubkeys().length)
     } catch (e) {
         logger.error(`Error requesting statistics: ${e.message}`)
         return null
@@ -153,7 +157,7 @@ function addStatistics(statisticsData) {
         statistics.pop()
 }
 
-function addIssues(newIssuesData) {
+function addIssues(newIssuesData, totalNodesCount) {
     //merge new issues with existing ones
     function getUpdatedIssues(currentIssues, newIssues) {
         const updated = Object.keys(currentIssues).reduce((acc, key) => {
@@ -171,6 +175,11 @@ function addIssues(newIssuesData) {
         const currentNodeIssues = issues.nodeIssues[pubkey] || {}
         const newNodeIssues = newIssuesData.nodeIssues[pubkey] || {}
         issues.nodeIssues[pubkey] = getUpdatedIssues(currentNodeIssues, newNodeIssues)
+    }
+
+    //check if there is no majority of nodes available
+    if (!hasMajority(totalNodesCount, Object.values(issues.nodeIssues).filter(issue => !issue[issueTypes.NODE_UNAVAILABLE]).length)) {
+        newIssuesData.clusterIssues[issueTypes.NO_MAJORITY] = new NodeIssueItem(issueTypes.NO_MAJORITY, 'No majority of nodes available', Date.now())
     }
 
     issues.clusterIssues = getUpdatedIssues(issues.clusterIssues, newIssuesData.clusterIssues)
