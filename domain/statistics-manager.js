@@ -35,6 +35,8 @@ class NodeIssueItem {
             case issueTypes.NODE_UNAVAILABLE:
                 return Date.now() - this.timestamp > __hoursToMs(1) && __shouldSend(6) //if node is unavailable for more than 1 hour
             case issueTypes.NO_MAJORITY:
+            case issueTypes.WRONG_CONFIG:
+            case issueTypes.WRONG_PENDING_CONFIG:
                 return Date.now() - this.timestamp > __hoursToMs(.1) && __shouldSend(6) //if no majority for more than 6 minutes
             case issueTypes.PRICE_UPDATE_ISSUE:
             case issueTypes.CLUSTER_UPDATE_ISSUE:
@@ -48,7 +50,7 @@ class NodeIssueItem {
 
 const statistics = []
 
-const issues = {nodeIssues: {}, clusterIssues: {}}
+const issues = {nodeIssues: {}, clusterIssues: {}, oracleIssues: {}}
 
 async function getStatistics() {
     try {
@@ -133,21 +135,22 @@ function collectIssues(nodeStatistics, configData) {
         nodeIssues[pubkey] = issues
     }
 
-    const clusterIssues = {}
+    const oracleIssues = Object.keys(configData.currentConfig?.config.config.contracts || {}).map(oracleId => ({[oracleId]: {}}))
 
     for (const [oracleId, lastOracleTimestamp] of Object.entries(lastOracleTimestamps)) {
         const contractData = configData.currentConfig.config.config.contracts[oracleId]
         if (!contractData)
             continue
         if (now - lastOracleTimestamp > contractData.timeframe * 2) { //if last oracle timestamp is older than 2 timeframes
-            clusterIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new NodeIssueItem(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue for oracle ${oracleId}.`, now)}
+            oracleIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new NodeIssueItem(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue with oracle ${oracleId}.`, now)}
         }
     }
 
+    const clusterIssues = {}
     if (configData.pendingConfig && now - configData.pendingConfig.timestamp > 1000 * 60 * 10) { //if pending config update is delayed for more than 10 minutes
         clusterIssues[issueTypes.CLUSTER_UPDATE_ISSUE] = new NodeIssueItem(issueTypes.CLUSTER_UPDATE_ISSUE, 'Cluster update issue.', now)
     }
-    return {nodeIssues, clusterIssues}
+    return {nodeIssues, clusterIssues, oracleIssues}
 }
 
 function addStatistics(statisticsData) {
@@ -184,18 +187,30 @@ function addIssues(newIssuesData, totalNodesCount) {
 
     issues.clusterIssues = getUpdatedIssues(issues.clusterIssues, newIssuesData.clusterIssues)
 
+    for (const oracleId in newIssuesData.oracleIssues) {
+        const currentOracleIssues = issues.oracleIssues[oracleId] || {}
+        const newOracleIssues = newIssuesData.oracleIssues[oracleId] || {}
+        issues.oracleIssues[oracleId] = getUpdatedIssues(currentOracleIssues, newOracleIssues)
+    }
+
     processIssues()
 }
+
+function getIssuesToSend(issuesContainer) {
+    const issuesToSend = []
+    for (const issue of Object.values(issuesContainer)) {
+        if (issue instanceof NodeIssueItem && issue.shouldSend()) {
+            issuesToSend.push(issue)
+        }
+    }
+    return issuesToSend
+}
+
 
 function processIssues() {
     for (const pubkey in issues.nodeIssues) {
         const nodeIssues = issues.nodeIssues[pubkey]
-        const notificationsToSend = []
-        for (const issue of Object.values(nodeIssues)) {
-            if (issue.shouldSend()) {
-                notificationsToSend.push(issue)
-            }
-        }
+        const notificationsToSend = getIssuesToSend(nodeIssues)
         if (notificationsToSend.length > 0) {
             container.emailProvider.sendToPubkey(pubkey, `Node ${pubkey} issues`, `<html><body><h1>Node issues<h1><hr/>${issuesToHtml(notificationsToSend.map(i => i.message))}</body></html>`)
                 .then(() => {
@@ -207,10 +222,10 @@ function processIssues() {
         }
     }
 
-    const notificationsToSend = []
-    for (const issue of Object.values(issues.clusterIssues)) {
-        if (issue.shouldSend())
-            notificationsToSend.push(issue)
+    const notificationsToSend = getIssuesToSend(issues.clusterIssues)
+    for (const oracleId in issues.oracleIssues) {
+        const oracleIssues = issues.oracleIssues[oracleId]
+        notificationsToSend.push(...getIssuesToSend(oracleIssues))
     }
 
     if (notificationsToSend.length > 0) {

@@ -81,10 +81,10 @@ class ConnectionManager {
      * @param {string} pubkey - pubkey
      */
     removeByPubkey(pubkey) {
-        for (const connection of ConnectionManager.values()) {
+        for (const connection of this.getNodeConnections()) {
             if (connection.pubkey !== pubkey)
                 continue
-            ConnectionManager.remove(connection.id)
+            this.remove(connection.id)
         }
     }
 
