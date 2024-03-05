@@ -74,10 +74,10 @@ async function getStatistics() {
             requests.push(request())
         }
         const nodeStatistics = (await Promise.allSettled(requests))
-            .reduce((statistics, response) => {
-                statistics[response.value.pubkey] = response.value.statistics
-                return statistics
-            }, {})
+            .reduce((acc, response) => ({
+                ...acc,
+                [response.value.pubkey]: response.value.statistics
+            }), {})
 
         const configData = container.configManager.getCurrentConfigs()
 
@@ -123,8 +123,6 @@ function collectIssues(nodeStatistics, configData) {
         }
         //set last oracle timestamps
         for (const oracleStatistics of Object.values(statistics.oracleStatistics)) {
-            if (!oracleStatistics)
-                console.log(oracleStatistics)
             const {lastOracleTimestamp, oracleId} = oracleStatistics
             if (!lastOracleTimestamps[oracleId])
                 lastOracleTimestamps[oracleId] = lastOracleTimestamp
@@ -135,13 +133,18 @@ function collectIssues(nodeStatistics, configData) {
         nodeIssues[pubkey] = issues
     }
 
-    const oracleIssues = Object.keys(configData.currentConfig?.config.config.contracts || {}).map(oracleId => ({[oracleId]: {}}))
+    const oracleIssues = Object.keys(configData.currentConfig?.config.config.contracts || {})
+        .reduce((acc, oracleId) => ({
+            ...acc,
+            [oracleId]: {}
+        }), {})
 
     for (const [oracleId, lastOracleTimestamp] of Object.entries(lastOracleTimestamps)) {
         const contractData = configData.currentConfig.config.config.contracts[oracleId]
         if (!contractData)
             continue
         if (now - lastOracleTimestamp > contractData.timeframe * 2) { //if last oracle timestamp is older than 2 timeframes
+            logger.debug(`Price update issue with oracle ${oracleId}, lastOracleTimestamp: ${lastOracleTimestamp}.`)
             oracleIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new NodeIssueItem(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue with oracle ${oracleId}.`, now)}
         }
     }
@@ -208,6 +211,7 @@ function getIssuesToSend(issuesContainer) {
 
 
 function processIssues() {
+    logger.debug(issues)
     for (const pubkey in issues.nodeIssues) {
         const nodeIssues = issues.nodeIssues[pubkey]
         const notificationsToSend = getIssuesToSend(nodeIssues)

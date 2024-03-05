@@ -10,7 +10,7 @@ const defaultLevel = isDev ? traceLevel : infoLevel
 const folder = './home/logs/'
 
 const MAX_LOG_FILE_SIZE = '2M'
-const LOG_RETENTION_DAYS = '1d'
+const LOG_RETENTION_DAYS = '7d'
 
 const basePath = path.resolve(path.resolve(process.cwd()), '..') + path.sep
 
@@ -80,7 +80,7 @@ const rfsOptions = {
     size: MAX_LOG_FILE_SIZE,
     interval: LOG_RETENTION_DAYS,
     path: folder,
-    maxFiles: 100
+    maxFiles: 10
 }
 
 const errorLogStream = rfs.createStream('error.log', rfsOptions)
