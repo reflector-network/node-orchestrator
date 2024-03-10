@@ -53,7 +53,7 @@ class AppConfig {
     whitelist = []
 
     /**
-     * @type {Map<string, {url: string, passphrase: string}>}
+     * @type {Map<string, {urls: string[], passphrase: string}>}
      */
     networks = new Map()
 
@@ -91,17 +91,17 @@ class AppConfig {
             const network = networks[networkName]
             if (!network)
                 throw new Error(`${networkName} is undefined`)
-            if (!network.url)
+            if (!network.urls || !Array.isArray(network.urls) || network.urls.length === 0)
                 throw new Error(`${networkName}.url is undefined`)
             if (!network.passphrase)
                 throw new Error(`${networkName}.passphrase is undefined`)
-            this.networks.set(networkName, {url: network.url, passphrase: network.passphrase})
+            this.networks.set(networkName, {urls: network.urls, passphrase: network.passphrase})
         }
     }
 
     /**
      * @param {string} network
-     * @returns {{url: string, passphrase: string}}
+     * @returns {{urls: string[], passphrase: string}}
      */
     getNetworkConfig(network) {
         if (!network)

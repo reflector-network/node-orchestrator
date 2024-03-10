@@ -37,8 +37,9 @@ class NodeIssueItem {
             case issueTypes.NO_MAJORITY:
             case issueTypes.WRONG_CONFIG:
             case issueTypes.WRONG_PENDING_CONFIG:
-                return Date.now() - this.timestamp > __hoursToMs(.1) && __shouldSend(6) //if no majority for more than 6 minutes
+                return Date.now() - this.timestamp > __hoursToMs(.1) && __shouldSend(6) //if error persists for more than 6 minutes
             case issueTypes.PRICE_UPDATE_ISSUE:
+                return __shouldSend(1)
             case issueTypes.CLUSTER_UPDATE_ISSUE:
                 return __shouldSend(6)
 

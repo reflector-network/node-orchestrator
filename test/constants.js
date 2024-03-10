@@ -7,11 +7,11 @@ const nodeKps = [
 const constatns = {
     networks: {
         testnet: {
-            url: "https://horizon-testnet.stellar.org",
+            urls: ["https://horizon-testnet.stellar.org"],
             passphrase: "Test SDF Network ; September 2015"
         },
         public: {
-            url: "https://horizon.stellar.org",
+            urls: ["https://horizon.stellar.org"],
             passphrase: "Public Global Stellar Network ; September 2015"
         }
     },

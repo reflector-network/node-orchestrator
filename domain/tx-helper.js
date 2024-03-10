@@ -7,6 +7,21 @@ const container = require('./container')
  * @typedef {import('@reflector/reflector-shared').Config} Config
  */
 
+async function tryMakeRpcRequest(urls, requestFn) {
+    const errors = []
+    for (const url of urls) {
+        try {
+            return await requestFn(url)
+        } catch (err) {
+            logger.debug(`Request to ${url} failed. Error: ${err.message}`)
+            errors.push(err)
+        }
+    }
+    for (const err of errors)
+        logger.error(err)
+    throw new Error('Failed to make request. See logs for details.')
+}
+
 /**
  *
  * @param {Config} currentConfig
@@ -16,12 +31,13 @@ const container = require('./container')
  */
 async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
     const {network, systemAccount} = currentConfig
-    const {url, passphrase} = container.appConfig.getNetworkConfig(network)
-    const accountResponse = await (new SorobanRpc.Server(url)).getAccount(systemAccount)
+    const {urls, passphrase} = container.appConfig.getNetworkConfig(network)
+    const requestFn = async (url) => await (new SorobanRpc.Server(url)).getAccount(systemAccount)
+    const accountResponse = await tryMakeRpcRequest(urls, requestFn)
     const account = new Account(systemAccount, accountResponse.sequence.toString())
     const tx = await buildUpdateTransaction({
         network: passphrase,
-        horizonUrl: url,
+        horizonUrls: urls,
         currentConfig,
         newConfig,
         account,
@@ -35,9 +51,10 @@ async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
 
 async function getUpdateTx(txHash, network) {
     try {
-        const {url} = container.appConfig.getNetworkConfig(network)
-        const txResponse = await (new SorobanRpc.Server(url))
+        const {urls} = container.appConfig.getNetworkConfig(network)
+        const requestFn = async (url) => await (new SorobanRpc.Server(url))
             .getTransaction(txHash)
+        const txResponse = await tryMakeRpcRequest(urls, requestFn)
         return txResponse
     } catch (err) {
         if (err.response?.status === 404)
