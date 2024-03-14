@@ -3,6 +3,7 @@ const {getMajority, hasMajority} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const container = require('./container')
+const ConfigStatus = require('./config-status')
 
 const issueTypes = {
     CONNECTION_ISSUES: 'CONNECTION_ISSUES',
@@ -119,7 +120,10 @@ function collectIssues(nodeStatistics, configData) {
         if (configData.currentConfig && configData.currentConfig.hash !== statistics.currentConfigHash) {
             issues[issueTypes.WRONG_CONFIG] = new NodeIssueItem(issueTypes.WRONG_CONFIG, 'Node has wrong config. Please, check that you\'ve signed the current config, or restart the node server', now)
         }
-        if (configData.pendingConfig && configData.pendingConfig.hash !== statistics.pendingConfigHash) {
+        if (configData.pendingConfig
+            && configData.pendingConfig.status === ConfigStatus.PENDING
+            && configData.pendingConfig.hash !== statistics.pendingConfigHash
+        ) {
             issues[issueTypes.WRONG_PENDING_CONFIG] = new NodeIssueItem(issueTypes.WRONG_PENDING_CONFIG, 'Node has wrong pending config. Please, restart the node server for sync.', now)
         }
         //set last oracle timestamps

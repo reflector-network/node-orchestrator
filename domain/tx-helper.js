@@ -37,7 +37,7 @@ async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
     const account = new Account(systemAccount, accountResponse.sequence.toString())
     const tx = await buildUpdateTransaction({
         network: passphrase,
-        horizonUrls: urls,
+        sorobanRpc: urls,
         currentConfig,
         newConfig,
         account,

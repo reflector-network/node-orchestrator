@@ -292,6 +292,8 @@ async function updateItems(allNodePubkeys) {
         default:
             break
     }
+    //wait one second before notifying nodes about config. Otherwise, some nodes may clear pending config before they processed it
+    await new Promise(resolve => setTimeout(resolve, 1000))
     await notifyNodesAboutConfig()
 }
 
