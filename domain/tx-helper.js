@@ -1,5 +1,5 @@
 const {SorobanRpc, Account} = require('@stellar/stellar-sdk')
-const {buildUpdateTransaction} = require('@reflector/reflector-shared')
+const {buildUpdateTransaction, normalizeTimestamp} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('./container')
 
@@ -41,7 +41,8 @@ async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
         currentConfig,
         newConfig,
         account,
-        timestamp
+        timestamp,
+        maxTime: normalizeTimestamp(timestamp, 1000) + 15000 //round to seconds and add 15 seconds
     })
     if (!tx)
         return null
