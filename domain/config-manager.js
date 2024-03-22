@@ -3,7 +3,9 @@ const {
     buildUpdates,
     verifySignature,
     ValidationError,
-    sortObjectKeys
+    sortObjectKeys,
+    isTimestampValid,
+    normalizeTimestamp
 } = require('@reflector/reflector-shared')
 const mongoose = require('mongoose')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
@@ -206,6 +208,14 @@ class ConfigManager {
             throw new ValidationError('Pending config already expired')
         if (configItem.expirationDate <= config.minDate)
             throw new ValidationError('Config min date cannot be less than expiration date')
+        if (config.minDate && !isTimestampValid(config.minDate, 1000))
+            throw new ValidationError('Config min date is not valid. It should be rounded to seconds')
+        if (configItem.envelope.timestamp && configItem.envelope.timestamp < config.minDate)
+            throw new ValidationError('Config timestamp cannot be less than min date')
+        if (configItem.envelope.timestamp && configItem.envelope.timestamp > configItem.expirationDate)
+            throw new ValidationError('Config timestamp cannot be greater than expiration date')
+        if (configItem.envelope.timestamp && !isTimestampValid(configItem.envelope.timestamp, 1000))
+            throw new ValidationError('Config timestamp is not valid. It should be rounded to seconds')
         if (__currentConfig && buildUpdates(1n, __currentConfig.envelope.config, config).size === 0)
             throw new ValidationError('Config doesn\'t have any changes')
         if (rejected)
@@ -405,7 +415,7 @@ async function getPendingConfigData(configItem) {
     let timestamp = configItem.envelope.timestamp
     if (configItem.envelope.timestamp === 0) {
         //get timestamp for pending config
-        const minDate = Math.max(configItem.envelope.config.minDate || Date.now())
+        const minDate = Math.max(configItem.envelope.config.minDate || normalizeTimestamp(Date.now(), 1000))
         timestamp = minDate + 1000 * 60 * 10 //10 minutes
     }
     //get txHash for pending config

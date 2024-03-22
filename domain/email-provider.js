@@ -1,4 +1,5 @@
 const {default: axios} = require('axios')
+const logger = require('../logger')
 const container = require('./container')
 
 class EmailProvider {
@@ -36,8 +37,10 @@ class EmailProvider {
             data: message
         }
 
-        await axios
+        const result = await axios
             .request(options)
+
+        logger.debug(result.data)
     }
 
     /**

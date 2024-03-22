@@ -216,9 +216,11 @@ function getIssuesToSend(issuesContainer) {
 
 
 function processIssues() {
-    logger.debug(issues)
+    let hasIssues = false
+    //node issues
     for (const pubkey in issues.nodeIssues) {
         const nodeIssues = issues.nodeIssues[pubkey]
+        hasIssues = hasIssues || Object.keys(nodeIssues).length > 0
         const notificationsToSend = getIssuesToSend(nodeIssues)
         if (notificationsToSend.length > 0) {
             container.emailProvider.sendToPubkey(pubkey, `Node ${pubkey} issues`, `<html><body><h1>Node issues<h1><hr/>${issuesToHtml(notificationsToSend.map(i => i.message))}</body></html>`)
@@ -231,10 +233,17 @@ function processIssues() {
         }
     }
 
+    //cluster issues
     const notificationsToSend = getIssuesToSend(issues.clusterIssues)
+    hasIssues = hasIssues || Object.keys(issues.clusterIssues).length > 0
     for (const oracleId in issues.oracleIssues) {
         const oracleIssues = issues.oracleIssues[oracleId]
+        hasIssues = hasIssues || Object.keys(oracleIssues).length > 0
         notificationsToSend.push(...getIssuesToSend(oracleIssues))
+    }
+
+    if (hasIssues) {
+        logger.debug(issues)
     }
 
     if (notificationsToSend.length > 0) {

@@ -42,7 +42,8 @@ async function getUpdateTxHash(currentConfig, newConfig, timestamp) {
         newConfig,
         account,
         timestamp,
-        maxTime: normalizeTimestamp(timestamp, 1000) + 15000 //round to seconds and add 15 seconds
+        fee: 10000000,
+        maxTime: (normalizeTimestamp(timestamp, 1000) / 1000) + 15 //round to seconds and add 15 seconds
     })
     if (!tx)
         return null
