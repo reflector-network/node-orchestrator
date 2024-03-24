@@ -96,7 +96,7 @@ async function getStatistics() {
         logger.error(`Error requesting statistics: ${e.message}`)
         return null
     } finally {
-        setTimeout(getStatistics, 10000)
+        setTimeout(getStatistics, 60000)
     }
 }
 

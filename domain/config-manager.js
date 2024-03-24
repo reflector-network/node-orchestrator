@@ -1,3 +1,4 @@
+/*eslint-disable class-methods-use-this */
 const {
     ConfigEnvelope,
     buildUpdates,
@@ -5,7 +6,8 @@ const {
     ValidationError,
     sortObjectKeys,
     isTimestampValid,
-    normalizeTimestamp
+    normalizeTimestamp,
+    UpdateType
 } = require('@reflector/reflector-shared')
 const mongoose = require('mongoose')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
@@ -15,7 +17,7 @@ const logger = require('../logger')
 const ConfigStatus = require('./config-status')
 const {computeUpdateStatus} = require('./utils')
 const notificationProvider = require('./notification-provider')
-const {getUpdateTxHash, getUpdateTx} = require('./tx-helper')
+const {getUpdateTxHash, getUpdateTx, getAccountSequence} = require('./tx-helper')
 const container = require('./container')
 
 /**
@@ -44,7 +46,7 @@ let __defaultNodes = null
 
 class ConfigItem {
     /**
-     * @param {any} rawEnvelope
+     * @param {any} rawEnvelope - The raw config envelope
      */
     constructor(rawEnvelope) {
         if (!rawEnvelope)
@@ -57,6 +59,7 @@ class ConfigItem {
         this.id = rawEnvelope.id
         this.description = rawEnvelope.description
         this.txHash = rawEnvelope.txHash
+        this.isBlockchainUpdate = rawEnvelope.isBlockchainUpdate
     }
 
     /**
@@ -89,6 +92,11 @@ class ConfigItem {
      */
     txHash = null
 
+    /**
+     * @type {boolean}
+     */
+    isBlockchainUpdate = null
+
     toPlainObject() {
         return sortObjectKeys({
             ...this.envelope.toPlainObject(),
@@ -97,7 +105,8 @@ class ConfigItem {
             description: this.description,
             expirationDate: this.expirationDate,
             status: this.status,
-            txHash: this.txHash
+            txHash: this.txHash,
+            isBlockchainUpdate: this.isBlockchainUpdate
         })
     }
 }
@@ -166,7 +175,7 @@ class ConfigManager {
     }
     /**
      *
-     * @param {any} rawConfigEnvelope
+     * @param {any} rawConfigEnvelope - The raw config envelope
      * @returns {Promise<any>}
      */
     async create(rawConfigEnvelope) {
@@ -216,12 +225,25 @@ class ConfigManager {
             throw new ValidationError('Config timestamp cannot be greater than expiration date')
         if (configItem.envelope.timestamp && !isTimestampValid(configItem.envelope.timestamp, 1000))
             throw new ValidationError('Config timestamp is not valid. It should be rounded to seconds')
-        if (__currentConfig && buildUpdates(1n, __currentConfig.envelope.config, config).size === 0)
-            throw new ValidationError('Config doesn\'t have any changes')
+        let isBlockchainUpdate = false
+        if (__currentConfig) {
+            const updates = buildUpdates(1n, __currentConfig.envelope.config, config)
+            if (updates.size === 0)
+                throw new ValidationError('Config doesn\'t have any changes')
+            for (const update of [...updates.values()].filter(u => u)) {
+                if (update.type === UpdateType.NODES) {
+                    const newNodes = [...update.newNodes.keys()]
+                    const currentNodes = [...update.currentNodes.keys()]
+                    if (newNodes.length === currentNodes.length && newNodes.every(n => currentNodes.includes(n)))
+                        continue
+                }
+                isBlockchainUpdate = true
+            }
+        }
         if (rejected)
             throw new ValidationError('Rejected signature cannot be used to create config')
 
-        __pendingConfig = await createConfig(configItem, this.allNodePubkeys().length, !__currentConfig)
+        __pendingConfig = await createConfig(configItem, this.allNodePubkeys().length, !__currentConfig, isBlockchainUpdate)
 
         updateItems(this.allNodePubkeys())
         notificationProvider.notify({type: 'config-created', data: cleanupConfig(configItem.toPlainObject())}, ChannelTypes.ANON)
@@ -318,10 +340,12 @@ function getRemovedNodes(currentNodePubkeys) {
     return removedNodes
 }
 
+
 /**
  * @param {ConfigManager} configManager
+ * @param {number} syncTimestamp
  */
-async function processPendingConfig(configManager) {
+async function processPendingConfig(configManager, syncTimestamp) {
     let timeout = 5000
     try {
         const now = Date.now()
@@ -343,20 +367,35 @@ async function processPendingConfig(configManager) {
                 break
             case ConfigStatus.PENDING: //try to apply expired pending updates
                 if (__pendingConfig.envelope.timestamp > now) {
+                    syncTimestamp = __pendingConfig.envelope.timestamp
                     timeout = __pendingConfig.envelope.timestamp - now
                     return
                 }
-                if (__pendingConfig.txHash) { //if now txHash, than tx is not required for update, so just change status
-                    const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
-                    if (txResponse?.status !== 'SUCCESS')
-                        return
+                if (__pendingConfig.isBlockchainUpdate) { //if now txHash, than tx is not required for update, so just change status
+                    let isSuccessful = false
+                    try {
+                        isSuccessful = await waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp)
+                    } catch (error) {
+                        if (error.message.startsWith('simulation incorrect'))
+                            logger.error('Building update tx failed. Simulation incorrect.')
+                        else
+                            logger.error(error)
+                    }
+                    if (!isSuccessful) {
+                        syncTimestamp = normalizeTimestamp(Date.now() + 60000, 1000) //add 1 minutes
+                        timeout = syncTimestamp - Date.now()
+                        return //if txHash is not set, than update was not successful
+                    }
                 }
                 if (__currentConfig) {
                     const session = await mongoose.startSession()
                     session.startTransaction()
                     try {
                         await ConfigEnvelopeModel.findByIdAndUpdate({_id: __currentConfig.id}, {status: ConfigStatus.REPLACED}).exec()
-                        await ConfigEnvelopeModel.findByIdAndUpdate({_id: __pendingConfig.id}, {status: ConfigStatus.APPLIED}).exec()
+                        await ConfigEnvelopeModel.findByIdAndUpdate(
+                            {_id: __pendingConfig.id},
+                            {status: ConfigStatus.APPLIED, txHash: __pendingConfig.txHash}
+                        ).exec()
                         await session.commitTransaction()
                         __pendingConfig.status = ConfigStatus.APPLIED
                     } catch (error) {
@@ -377,8 +416,48 @@ async function processPendingConfig(configManager) {
     } catch (error) {
         logger.error(error)
     } finally {
-        setTimeout(() => processPendingConfig(configManager), timeout)
+        setTimeout(() => processPendingConfig(configManager, syncTimestamp), timeout)
     }
+}
+
+async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp) {
+    //Attempt to get transaction response directly by hash
+    if (__pendingConfig.txHash) {
+        const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
+        return txResponse?.status === 'SUCCESS'
+    }
+
+    //Transaction hash not found, generate and poll
+    const accountSequence = await getAccountSequence(__currentConfig.envelope.config)
+
+    for (let i = 0; i < 4; i++) {
+        const {hash, maxTime} = await getUpdateTxHash(
+            __currentConfig.envelope.config,
+            __pendingConfig.envelope.config,
+            accountSequence,
+            __pendingConfig.envelope.timestamp,
+            syncTimestamp || __pendingConfig.envelope.timestamp,
+            i
+        )
+
+        if (await pollForTransactionSuccess(hash, maxTime, __currentConfig.envelope.config.network)) {
+            __pendingConfig.txHash = hash
+            return true
+        }
+    }
+
+    return false //Update failed after all attempts
+}
+
+async function pollForTransactionSuccess(hash, maxTime, network) {
+    while (maxTime + 1 >= Date.now() / 1000) {
+        const txResponse = await getUpdateTx(hash, network)
+        if (txResponse?.status === 'SUCCESS') {
+            return true
+        }
+        await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    return false //Timed out
 }
 
 /**
@@ -410,21 +489,6 @@ function getConfigToModify(configItem) {
 
 /**
  * @param {ConfigItem} configItem
- */
-async function getPendingConfigData(configItem) {
-    let timestamp = configItem.envelope.timestamp
-    if (configItem.envelope.timestamp === 0) {
-        //get timestamp for pending config
-        const minDate = Math.max(configItem.envelope.config.minDate || normalizeTimestamp(Date.now(), 1000))
-        timestamp = minDate + 1000 * 60 * 10 //10 minutes
-    }
-    //get txHash for pending config
-    const txHash = __currentConfig ? (await getUpdateTxHash(__currentConfig.envelope.config, configItem.envelope.config, timestamp)) : null
-    return {timestamp, txHash}
-}
-
-/**
- * @param {ConfigItem} configItem
  * @param {Number} signatureIndex
  * @param {Signature} signature
  * @param {Number} nodesCount
@@ -449,9 +513,8 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
             update.$set = update.$set || {}
             update.$set.status = currentStatus
             if (currentStatus === ConfigStatus.PENDING) {
-                const {timestamp, txHash} = await getPendingConfigData(configItem)
-                update.$set.timestamp = timestamp
-                update.$set.txHash = txHash
+                //get timestamp for pending config
+                update.$set.timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
             }
         }
     }
@@ -468,25 +531,31 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
     configItem.status = updatedDoc.status
     configItem.envelope.signatures = updatedEnvelope.signatures
     configItem.envelope.timestamp = updatedEnvelope.timestamp
-    if (updatedDoc.txHash)
-        configItem.txHash = updatedDoc.txHash
 
     return configItem
 }
 
+function getTimestamp(timestamp, minDate) {
+    if (timestamp)
+        return timestamp
+    minDate = Math.max(minDate || normalizeTimestamp(Date.now(), 1000))
+    return minDate + 1000 * 60 * 10 //10 minutes
+}
+
 /**
- * @param {ConfigItem} configItem
- * @param {Number} nodesCount
- * @param {boolean} isInitConfig
+ * @param {ConfigItem} configItem - The config item to create
+ * @param {Number} nodesCount - The total nodes count
+ * @param {boolean} isInitConfig - Flag to indicate if the config is initial
+ * @param {boolean} isBlockchainUpdate - Flag to indicate if the config is blockchain update
+ * @returns {Promise<ConfigItem>}
  */
-async function createConfig(configItem, nodesCount, isInitConfig) {
+async function createConfig(configItem, nodesCount, isInitConfig, isBlockchainUpdate) {
     //compute status and add to update if changed
     const currentStatus = computeUpdateStatus(configItem.envelope.signatures, nodesCount, isInitConfig)
     configItem.status = currentStatus
+    configItem.isBlockchainUpdate = isBlockchainUpdate
     if (currentStatus === ConfigStatus.PENDING) {
-        const {timestamp, txHash} = await getPendingConfigData(configItem)
-        configItem.envelope.timestamp = timestamp
-        configItem.txHash = txHash
+        configItem.envelope.timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
     }
     const rawConfig = configItem.toPlainObject()
     const configDoc = new ConfigEnvelopeModel(rawConfig)

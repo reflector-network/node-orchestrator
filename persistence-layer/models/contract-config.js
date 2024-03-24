@@ -136,6 +136,11 @@ const configEnvelopeSchemaModel = new mongoose.Schema({
         type: String,
         required: false,
         default: null
+    },
+    isBlockchainUpdate: {
+        type: Boolean,
+        required: false,
+        default: false
     }
 }, {timestamps: true})
 
@@ -149,7 +154,8 @@ configEnvelopeSchemaModel.methods.toPlainObject = function () {
         expirationDate: this.expirationDate,
         status: this.status,
         timestamp: this.timestamp,
-        txHash: this.txHash
+        txHash: this.txHash,
+        isBlockchainUpdate: this.isBlockchainUpdate
     })
 }
 

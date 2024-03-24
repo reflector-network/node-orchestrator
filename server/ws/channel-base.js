@@ -76,7 +76,7 @@ class ChannelBase {
                     const error = new Error('Request timed out')
                     error.timeout = true
                     reject(error)
-                }, 5000000)
+                }, 5000)
                 this.__requests[message.requestId] = {
                     resolve,
                     reject,
