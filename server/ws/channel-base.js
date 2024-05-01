@@ -1,7 +1,8 @@
 const WebSocket = require('ws')
 const {v4: uuidv4} = require('uuid')
 const logger = require('../../logger')
-const contrainer = require('../../domain/container')
+const container = require('../../domain/container')
+const {isDebugging} = require('../../domain/utils')
 const MessageTypes = require('./handlers/message-types')
 
 class ChannelBase {
@@ -59,10 +60,6 @@ class ChannelBase {
         return this.isOpen && this.isValidated
     }
 
-    removeAllListeners() {
-        this.__ws?.removeAllListeners()
-    }
-
     /**
      * @param {any} message - message to send
      * @returns {Promise<any>}
@@ -71,12 +68,13 @@ class ChannelBase {
         return new Promise((resolve, reject) => {
             if (!message.responseId) {
                 message.requestId = uuidv4()
+                const timeout = isDebugging() ? 60 * 1000 * 60 : 5000
                 const responseTimeout = setTimeout(() => {
                     delete this.__requests[message.requestId]
-                    const error = new Error('Request timed out')
+                    const error = new Error(`Request timed out after ${timeout}. Message: ${message.type}. ${this.__getConnectionInfo()}`)
                     error.timeout = true
                     reject(error)
-                }, 5000)
+                }, timeout)
                 this.__requests[message.requestId] = {
                     resolve,
                     reject,
@@ -100,36 +98,33 @@ class ChannelBase {
 
     close(code, reason, terminate = true) {
         this.__termination = terminate
-        if (this.__ws) {
-            this.__ws.removeAllListeners()
-            this.__ws.closeTimeout = setTimeout(() => {
-                if (this.__ws.readyState !== WebSocket.CLOSED) {
-                    logger.debug('Server did not close connection in time, forcefully closing')
-                    this.__ws.terminate()
-                }
+        const ws = this.__ws
+        if (ws) {
+            ws.closeTimeout = setTimeout(() => {
+                ws.close(code, reason)
             }, 5000)
-            if (this.__ws.readyState === WebSocket.CONNECTING || this.__ws.readyState === WebSocket.OPEN) {
-                this.__ws.close(code, reason)
+            if (ws.readyState === WebSocket.CONNECTING) {
+                ws.removeAllListeners('open')
+                ws.on('open', () => {
+                    ws.close(code, reason)
+                })
+            } else if (ws.readyState === WebSocket.OPEN) {
+                ws.close(code, reason)
+            } else if (ws.readyState === WebSocket.CLOSED) {
+                this.__closeAndInvalidate(ws, code, reason)
             }
         }
-        this.__isValidated = false
     }
 
     /**
      * @protected
+     * @returns {WebSocket.WebSocket}
      */
     __assignListeners() {
-        this.__ws
+        return this.__ws
             .addListener('close', (code, reason) => this.__onClose(code, reason))
             .addListener('error', (error) => this.__onError(error))
             .addListener('message', async (message) => await this.__onMessage(message))
-    }
-
-    /**
-     * @protected
-     */
-    __onOpen() {
-        this.__assignListeners()
     }
 
     /**
@@ -144,7 +139,7 @@ class ChannelBase {
                 && [MessageTypes.ERROR, MessageTypes.OK].indexOf(message.type) === -1
             ) //message requires handling
                 try {
-                    result = await contrainer.handlersManager.handle(this, message) || {type: MessageTypes.OK, responseId: message.requestId}
+                    result = await container.handlersManager.handle(this, message) || {type: MessageTypes.OK, responseId: message.requestId}
                 } catch (e) {
                     logger.debug(e)
                     result = {
@@ -181,14 +176,26 @@ class ChannelBase {
     }
 
     __onClose(code, reason) {
-        if (this.__ws) {
-            this.__ws.closeTimeout && clearTimeout(this.__ws.closeTimeout)
-            this.__ws.terminate()
+        this.__closeAndInvalidate(this.__ws, code, reason)
+    }
+
+    __closeAndInvalidate(ws, code, reason) {
+        if (!ws)
+            return
+        ws.closeTimeout && clearTimeout(ws.closeTimeout)
+        if (ws.readyState !== WebSocket.CLOSED) {
+            logger.warn(`${this.__getConnectionInfo()} was not closed properly (${ws.readyState}). Terminating...`)
+            try {
+                ws.terminate()
+            } catch (e) {
+                logger.error(e)
+            }
+        }
+        if (this.__ws === ws) {
             this.__ws = null
             this.__isValidated = false
-            contrainer.connectionManager.remove(this.id)
         }
-        logger.debug(`${this.__getConnectionInfo()} closed with code ${code} and reason ${reason}`)
+        logger.debug(`${this.__getConnectionInfo()} closed with code ${code} and reason ${reason || 'abnormal'}`)
     }
 
     __onError(error) {

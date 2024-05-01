@@ -19,7 +19,7 @@ async function init(container) {
 
     container.server.init(container.appConfig.port)
 
-    function shutdown(code = 0) {
+    async function shutdown(code = 0) {
 
         logger.info('Received kill signal, code = ' + code)
 
@@ -31,7 +31,7 @@ async function init(container) {
 
         logger.info('Disconnecting from database.')
 
-        disconnect()
+        await disconnect()
 
         logger.info('Disconnected from database.')
 
@@ -47,18 +47,18 @@ async function init(container) {
             logger.error(reason)
         })
 
-        process.on('SIGINT', () => {
-            shutdown()
+        process.on('SIGINT', async () => {
+            await shutdown()
         })
 
-        process.on('SIGTERM', () => {
-            shutdown()
+        process.on('SIGTERM', async () => {
+            await shutdown()
         })
 
         return container.server
     } catch (e) {
         logger.error(e)
-        shutdown(13)
+        await shutdown(13)
     }
 }
 

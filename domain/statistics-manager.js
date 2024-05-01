@@ -88,8 +88,8 @@ async function getStatistics() {
         addStatistics({
             nodeStatistics,
             currentTimestamp: Date.now(),
-            currentConfigHash: configData.currentConfig?.hash,
-            pendingConfigHash: configData.pendingConfig?.hash
+            currentConfigHash: configData?.currentConfig?.hash,
+            pendingConfigHash: configData?.pendingConfig?.hash
         })
         addIssues(issuesData, container.configManager.allNodePubkeys().length)
     } catch (e) {
@@ -145,7 +145,7 @@ function collectIssues(nodeStatistics, configData) {
         }), {})
 
     for (const [oracleId, lastOracleTimestamp] of Object.entries(lastOracleTimestamps)) {
-        const contractData = configData.currentConfig.config.config.contracts[oracleId]
+        const contractData = configData.currentConfig?.config?.config.contracts[oracleId]
         if (!contractData)
             continue
         if (now - lastOracleTimestamp > contractData.timeframe * 2) { //if last oracle timestamp is older than 2 timeframes

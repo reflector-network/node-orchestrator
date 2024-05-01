@@ -32,8 +32,8 @@ async function dropDatabase() {
     await __connection.connection.db.dropDatabase()
 }
 
-function disconnect() {
-    __connection.close()
+async function disconnect() {
+    await __connection?.connection?.close()
     __connection = null
 }
 
