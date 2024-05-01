@@ -63,7 +63,7 @@ async function getStatistics() {
             const request = async () => {
                 const result = {pubkey, statistics: null}
                 try {
-                    if (channel) {
+                    if (channel && channel.isReady) {
                         const statisticsData = await channel.send({type: MessageTypes.STATISTICS_REQUEST})
                         statisticsData.timeshift = Date.now() - statisticsData.currentTime
                         result.statistics = statisticsData
