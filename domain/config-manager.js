@@ -97,6 +97,11 @@ class ConfigItem {
      */
     isBlockchainUpdate = null
 
+    /**
+     * @type {boolean}
+     */
+    hasMoreTxns = false
+
     toPlainObject() {
         return sortObjectKeys({
             ...this.envelope.toPlainObject(),
@@ -134,7 +139,7 @@ class ConfigManager {
         if (!__currentConfig && (!defaultNodes || defaultNodes.length < 1))
             throw new Error('Default nodes are not defined')
         __defaultNodes = defaultNodes
-        processPendingConfig(this)
+        processPendingConfig(this, normalizeTimestamp(Date.now(), updateIdleTimeframe))
     }
 
     /**
@@ -340,6 +345,17 @@ function getRemovedNodes(currentNodePubkeys) {
     return removedNodes
 }
 
+const updateIdleTimeframe = 1000 * 60 * 2 //2 minutes
+
+function isPendingConfigExpired() {
+    return __pendingConfig.envelope.timestamp < Date.now()
+}
+
+function getNextSyncTimestamp(timestamp) {
+    if (!__pendingConfig || isPendingConfigExpired())
+        return normalizeTimestamp(timestamp + updateIdleTimeframe, updateIdleTimeframe)
+    return __pendingConfig.envelope.timestamp
+}
 
 /**
  * @param {ConfigManager} configManager
@@ -348,13 +364,12 @@ function getRemovedNodes(currentNodePubkeys) {
 async function processPendingConfig(configManager, syncTimestamp) {
     let timeout = 5000
     try {
-        const now = Date.now()
         if (!__pendingConfig)
             return
         switch (__pendingConfig.status) {
             case ConfigStatus.VOTING:
                 {
-                    if (__pendingConfig.expirationDate < now) {
+                    if (__pendingConfig.expirationDate < Date.now()) {
                         //reject expired voting updates
                         await ConfigEnvelopeModel.findOneAndUpdate(
                             {_id: __pendingConfig.id},
@@ -366,9 +381,9 @@ async function processPendingConfig(configManager, syncTimestamp) {
                 }
                 break
             case ConfigStatus.PENDING: //try to apply expired pending updates
-                if (__pendingConfig.envelope.timestamp > now) {
+                if (__pendingConfig.envelope.timestamp > Date.now()) {
                     syncTimestamp = __pendingConfig.envelope.timestamp
-                    timeout = __pendingConfig.envelope.timestamp - now
+                    timeout = __pendingConfig.envelope.timestamp - Date.now()
                     return
                 }
                 if (__pendingConfig.isBlockchainUpdate) { //if now txHash, than tx is not required for update, so just change status
@@ -381,10 +396,10 @@ async function processPendingConfig(configManager, syncTimestamp) {
                         else
                             logger.error(error)
                     }
-                    if (!isSuccessful) {
-                        syncTimestamp = normalizeTimestamp(Date.now() + 60000, 1000) //add 1 minutes
+                    if (!isSuccessful || __pendingConfig.hasMoreTxns) { //if update failed, or there are more txns to be processed
+                        syncTimestamp = getNextSyncTimestamp(syncTimestamp) //set next sync time
                         timeout = syncTimestamp - Date.now()
-                        return //if txHash is not set, than update was not successful
+                        return //wait for next sync
                     }
                 }
                 if (__currentConfig) {
@@ -422,26 +437,41 @@ async function processPendingConfig(configManager, syncTimestamp) {
 
 async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp) {
     //Attempt to get transaction response directly by hash
-    if (__pendingConfig.txHash) {
-        const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
-        return txResponse?.status === 'SUCCESS'
+    if (__pendingConfig.txHash && !__pendingConfig.hasMoreTxns) {
+        const hashes = __pendingConfig.txHash.split(',')
+        for (const hash of hashes) {
+            const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
+            if (txResponse?.status !== 'SUCCESS') {
+                logger.error(`Failed to get transaction response by hash: ${hash}`)
+                return false
+            }
+        }
+        return true
     }
 
     //Transaction hash not found, generate and poll
     const accountSequence = await getAccountSequence(__currentConfig.envelope.config)
 
     for (let i = 0; i < 4; i++) {
-        const {hash, maxTime} = await getUpdateTxHash(
+        const {hash, maxTime, hasMoreTxns} = await getUpdateTxHash(
             __currentConfig.envelope.config,
             __pendingConfig.envelope.config,
             accountSequence,
             __pendingConfig.envelope.timestamp,
-            syncTimestamp || __pendingConfig.envelope.timestamp,
+            syncTimestamp,
             i
-        )
+        ) || {}
+
+        if (!hash) { //if no hash and no error, than no changes to apply
+            __pendingConfig.hasMoreTxns = false
+            return true //No changes to apply
+        }
+
+        __pendingConfig.hasMoreTxns = hasMoreTxns
 
         if (await pollForTransactionSuccess(hash, maxTime, __currentConfig.envelope.config.network)) {
-            __pendingConfig.txHash = hash
+            logger.info(`Success update. Tx hash: ${hash}, hasMoreTxns: ${hasMoreTxns}`)
+            __pendingConfig.txHash = [(__pendingConfig.txHash || ''), hash].join(',').replace(/(^,)|(,$)/g, '')
             return true
         }
     }
@@ -538,7 +568,7 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
 function getTimestamp(timestamp, minDate) {
     if (timestamp)
         return timestamp
-    minDate = Math.max(minDate || normalizeTimestamp(Date.now(), 1000))
+    minDate = normalizeTimestamp(Math.max(minDate || Date.now()), updateIdleTimeframe)
     return minDate + 1000 * 60 * 10 //10 minutes
 }
 

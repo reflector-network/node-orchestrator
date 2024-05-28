@@ -1,5 +1,4 @@
 const {StrKey} = require('@stellar/stellar-sdk')
-const {mailRegex} = require('./utils')
 
 class EmailSettings {
     constructor(rawSettings) {
@@ -7,8 +6,6 @@ class EmailSettings {
             throw new Error('rawSettings is undefined')
         if (!rawSettings.apiKey)
             throw new Error('apiKey is undefined')
-        if (!rawSettings.from || !mailRegex.test(rawSettings.from))
-            throw new Error('from is undefined')
         if (!rawSettings.appId)
             throw new Error('appId is undefined')
         this.apiKey = rawSettings.apiKey

@@ -24,8 +24,10 @@ async function tryMakeRpcRequest(urls, requestFn) {
 
 const baseUpdateFee = 10000000
 
+const txTimeout = 25000
+
 function __getMaxTime(syncTimestamp, iteration) {
-    const maxTime = syncTimestamp + (15000 * iteration)
+    const maxTime = syncTimestamp + (txTimeout * iteration)
     return maxTime / 1000 //convert to seconds
 }
 
@@ -36,7 +38,7 @@ function __getMaxTime(syncTimestamp, iteration) {
  * @param {number} timestamp
  * @param {number} syncTimestamp
  * @param {number} [iteration]
- * @returns {Promise<{hash: string, maxTime: number}>}
+ * @returns {Promise<{hash: string, maxTime: number, hasMoreTxns: boolean}>}
  */
 async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, syncTimestamp, iteration = 0) {
 
@@ -58,8 +60,12 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
     })
     if (!tx)
         return null
-    logger.info(`Update tx: ${tx.transaction.toXDR()}`)
-    return {hash: tx.hashHex, maxTime}
+    logger.debug(`Update tx: ${tx.transaction.toXDR()}, maxTime: ${maxTime}, hasMoreTxns: ${tx.hasMoreTxns}, fee: ${fee}, iteration: ${iteration}, sequence: ${tx.transaction.sequence}, syncTimestamp: ${syncTimestamp}`)
+    return {
+        hash: tx.hashHex,
+        maxTime,
+        hasMoreTxns: !!tx.hasMoreTxns //if there are more txns to be processed
+    }
 }
 
 async function getUpdateTx(txHash, network) {

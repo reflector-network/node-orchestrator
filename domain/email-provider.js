@@ -28,7 +28,8 @@ class EmailProvider {
             "include_external_user_ids": [...new Set(to)],
             "channel_for_external_user_ids": "external_id",
             "email_subject": subject,
-            "email_body": text
+            "email_body": text,
+            "email_from_name": this.from
         }
         const options = {
             method: 'POST',
