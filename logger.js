@@ -135,7 +135,7 @@ const rfsOptions = {
     size: MAX_LOG_FILE_SIZE,
     interval: LOG_RETENTION_DAYS,
     path: folder,
-    maxFiles: 10
+    maxFiles: 20
 }
 
 const errorLogStream = rfs.createStream('error.log', rfsOptions)
