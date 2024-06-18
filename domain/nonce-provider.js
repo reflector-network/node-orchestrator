@@ -10,13 +10,13 @@ const nonceProvider = {
      */
     get: async (pubkey) => {
         //Check cache first
-        if (cache[pubkey]) {
-            const nonce = (await NonceModel.findOne({pubkey}).exec())?.toPlainObject()?.nonce || 0
-            if (!nonce)
-                return 0
-            cache[pubkey] = nonce
-        }
-        return cache[pubkey]
+        if (cache[pubkey] > 0)
+            return cache[pubkey]
+
+        const nonce = (await NonceModel.findOne({pubkey}).exec())?.toPlainObject()?.nonce || 0
+        cache[pubkey] = nonce
+
+        return nonce
     },
     /**
      * @param {string} pubkey - The public key of the node
@@ -26,7 +26,8 @@ const nonceProvider = {
     update: async (pubkey, nonce) => {
         await NonceModel.findOneAndUpdate(
             {pubkey},
-            {$set: {nonce}}
+            {$set: {nonce}},
+            {upsert: true}
         ).exec()
 
         cache[pubkey] = nonce

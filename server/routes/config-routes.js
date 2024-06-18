@@ -43,7 +43,7 @@ function configRoutes(app) {
      *               items:
      *                 $ref: '#/components/schemas/Config'
      */
-    registerRoute(app, 'config/history', {method: 'get', authMode: AuthMode.mightAuth}, async (req) => await container.configManager.history(req.query, !!req.pubkey))
+    registerRoute(app, 'config/history', {method: 'get'}, async (req) => await container.configManager.history(req.query, !!req.pubkey))
 
     /**
      * @openapi
