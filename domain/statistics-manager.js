@@ -1,5 +1,5 @@
 /*eslint-disable guard-for-in */
-const {getMajority, hasMajority} = require('@reflector/reflector-shared')
+const {hasMajority} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const container = require('./container')
@@ -276,4 +276,4 @@ class StatisticsManager {
     }
 }
 
-module.exports = StatisticsManager
+module.exports = new StatisticsManager()

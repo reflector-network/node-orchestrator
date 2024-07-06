@@ -2,7 +2,6 @@
  * @typedef {import('./config-manager')} ConfigManager
  * @typedef {import('../server')} Server
  * @typedef {import('../server/ws/handlers/handlers-manager')} HandlersManager
- * @typedef {import('./statistics-manager')} StatisticsManager
  * @typedef {import('./connections-manager')} ConnectionManager
  * @typedef {import('./app-config')} AppConfig
  * @typedef {import('./email-provider')} EmailProvider
@@ -26,11 +25,6 @@ class Container {
      * @type {HandlersManager}
      * */
     handlersManager
-
-    /**
-     * @type {StatisticsManager}
-     */
-    statisticsManager
 
     /**
      * @type {ConnectionManager}

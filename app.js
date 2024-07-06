@@ -43,8 +43,7 @@ async function init(container) {
 
     try {
         process.on('unhandledRejection', (reason, p) => {
-            logger.error('Unhandled Rejection at: Promise')
-            logger.error(reason)
+            logger.error({err: reason}, 'Unhandled Rejection at: Promise')
         })
 
         process.on('SIGINT', async () => {

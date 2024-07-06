@@ -27,9 +27,8 @@ class NodeSettingsManager {
 
         try {
             await container.emailProvider.registerUsers(emails)
-        } catch (e) {
-            logger.error('Error registering emails')
-            logger.error(e)
+        } catch (err) {
+            logger.error({err}, 'Error registering emails')
             throw new ValidationError('Unable to register emails.')
         }
 

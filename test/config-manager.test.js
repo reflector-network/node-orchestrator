@@ -5,7 +5,6 @@ const ConfigManager = require('../domain/config-manager')
 const AppConfig = require('../domain/app-config')
 const {connect, dropDatabase} = require('../persistence-layer')
 const HandlersManager = require('../server/ws/handlers/handlers-manager')
-const StatisticsManager = require('../domain/statistics-manager')
 const ConnectionManager = require('../domain/connections-manager')
 const NodeSettingsManager = require('../domain/node-settings-manager')
 const constants = require('./constants')
@@ -17,7 +16,6 @@ beforeAll(async () => {
 
     container.configManager = new ConfigManager()
     container.handlersManager = new HandlersManager()
-    container.statisticsManager = new StatisticsManager()
     container.connectionManager = new ConnectionManager()
     container.nodeSettingsManager = new NodeSettingsManager()
 

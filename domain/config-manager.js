@@ -293,18 +293,16 @@ function getConfigMessage() {
 async function notifyNodesAboutConfig() {
     try {
         await notificationProvider.notify(getConfigMessage(), ChannelTypes.INCOMING)
-    } catch (error) {
-        logger.error('Error while notifying nodes about config')
-        logger.error(error)
+    } catch (err) {
+        logger.error({err}, 'Error while notifying nodes about config')
     }
 }
 
 async function notifyNodeAboutUpdate(pubkey) {
     try {
         await notificationProvider.notifyNode(getConfigMessage(), pubkey)
-    } catch (error) {
-        logger.error(`Error while notifying node ${pubkey} about config update`)
-        logger.error(error)
+    } catch (err) {
+        logger.error({err}, `Error while notifying node ${pubkey} about config update`)
     }
 }
 
