@@ -9,6 +9,7 @@ const {
     normalizeTimestamp,
     UpdateType
 } = require('@reflector/reflector-shared')
+const ContractTypes = require('@reflector/reflector-shared/models/configs/contract-type')
 const mongoose = require('mongoose')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
 const MessageTypes = require('../server/ws/handlers/message-types')
@@ -17,8 +18,9 @@ const logger = require('../logger')
 const ConfigStatus = require('./config-status')
 const {computeUpdateStatus} = require('./utils')
 const notificationProvider = require('./notification-provider')
-const {getUpdateTxHash, getUpdateTx, getAccountSequence} = require('./tx-helper')
+const {getUpdateTxHash, getUpdateTx, getAccountSequence} = require('./rpc-helper')
 const container = require('./container')
+const {setManagers} = require('./subscription-data-provider')
 
 /**
  * @typedef {import('./types').ConfigEnvelopeDto} ConfigEnvelopeDto
@@ -33,6 +35,17 @@ const minExpirationDatePeriod = hourPeriod * 24 * 7 //7 days
  * @type {ConfigItem}
  */
 let __currentConfig = null
+
+function setCurrentConfig(config) {
+    __currentConfig = config
+    const contracts = [...config.envelope.config.contracts.values()]
+        .filter(c => c.type === ContractTypes.SUBSCRIPTIONS)
+        .map(c => c.contractId)
+    setManagers( //set managers for subscription data provider
+        contracts,
+        __currentConfig.envelope.config.network
+    )
+}
 
 /**
  * @type {ConfigItem}
@@ -124,7 +137,7 @@ class ConfigManager {
     async init(defaultNodes) {
         const currentConfigDoc = await ConfigEnvelopeModel.findOne({status: ConfigStatus.APPLIED}).exec()
         if (currentConfigDoc) {
-            __currentConfig = new ConfigItem(currentConfigDoc.toPlainObject())
+            setCurrentConfig(new ConfigItem(currentConfigDoc.toPlainObject()))
             if (!__currentConfig.envelope.config.isValid) {
                 throw new Error(`Current config is invalid. ${__currentConfig.envelope.config.issuesString}`)
             }
@@ -319,7 +332,7 @@ async function updateItems(allNodePubkeys) {
             getRemovedNodes(allNodePubkeys).forEach(pubkey => {
                 container.connectionManager.removeByPubkey(pubkey)
             })
-            __currentConfig = __pendingConfig
+            setCurrentConfig(__pendingConfig)
             __pendingConfig = null
             break
         case ConfigStatus.PENDING:
@@ -450,7 +463,7 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
     //Transaction hash not found, generate and poll
     const accountSequence = await getAccountSequence(__currentConfig.envelope.config)
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
         const {hash, maxTime, hasMoreTxns} = await getUpdateTxHash(
             __currentConfig.envelope.config,
             __pendingConfig.envelope.config,

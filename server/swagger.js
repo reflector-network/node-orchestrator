@@ -217,6 +217,41 @@ const globalSwaggerConfig = {
                         }
                     }
                 }
+            },
+            Subscription: {
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string'
+                    },
+                    balance: {
+                        type: 'string'
+                    },
+                    threshold: {
+                        type: 'number'
+                    },
+                    updated: {
+                        type: 'string'
+                    },
+                    base: {
+                        type: 'object'
+                    },
+                    quote: {
+                        type: 'object'
+                    },
+                    heartbeat: {
+                        type: 'number'
+                    },
+                    status: {
+                        type: 'number'
+                    },
+                    owner: {
+                        type: 'string'
+                    },
+                    webhook: {
+                        type: 'string'
+                    }
+                }
             }
         }
     },

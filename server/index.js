@@ -15,6 +15,7 @@ const AnonIncomingChannel = require('./ws/anon-incoming-channel')
 const statisticsRoutes = require('./routes/statistics-routes')
 const logRoutes = require('./routes/log-routes')
 const settingsRoutes = require('./routes/node-settings-routes')
+const subscriptionRoutes = require('./routes/subscription-routes')
 
 function normalizePort(val) {
     const port = parseInt(val, 10)
@@ -43,6 +44,7 @@ class Server {
         statisticsRoutes(this.app)
         logRoutes(this.app)
         settingsRoutes(this.app)
+        subscriptionRoutes(this.app)
 
         const wss = new WebSocketServer({noServer: true})
 

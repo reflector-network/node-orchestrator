@@ -1,5 +1,4 @@
 const container = require('../../domain/container')
-const AuthMode = require('../auth-mode')
 const {registerRoute} = require('../route')
 const MessageTypes = require('../ws/handlers/message-types')
 
