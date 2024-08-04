@@ -363,7 +363,7 @@ function isPendingConfigExpired() {
 }
 
 function getNextSyncTimestamp(timestamp) {
-    if (!__pendingConfig || isPendingConfigExpired())
+    if (!__pendingConfig || __pendingConfig.envelope.allowEarlySubmission || isPendingConfigExpired())
         return normalizeTimestamp(timestamp + updateIdleTimeframe, updateIdleTimeframe)
     return __pendingConfig.envelope.timestamp
 }
@@ -398,18 +398,8 @@ async function processPendingConfig(configManager, syncTimestamp) {
                     return
                 }
                 if (__pendingConfig.isBlockchainUpdate) { //if now txHash, than tx is not required for update, so just change status
-                    let isSuccessful = false
-                    try {
-                        isSuccessful = await waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp)
-                    } catch (error) {
-                        if (error.message.startsWith('simulation incorrect'))
-                            logger.error('Building update tx failed. Simulation incorrect.')
-                        else
-                            logger.error(error)
-                    }
-                    if (!isSuccessful || __pendingConfig.hasMoreTxns) { //if update failed, or there are more txns to be processed
-                        syncTimestamp = getNextSyncTimestamp(syncTimestamp) //set next sync time
-                        timeout = syncTimestamp - Date.now()
+                    await waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp)
+                    if (__pendingConfig.hasMoreTxns) { //if update failed, or there are more txns to be processed
                         return //wait for next sync
                     }
                 }
@@ -439,9 +429,16 @@ async function processPendingConfig(configManager, syncTimestamp) {
         updateItems(configManager.allNodePubkeys())
         if (__currentConfig)
             notificationProvider.notify({type: 'update', data: cleanupConfig(__currentConfig.toPlainObject())}, ChannelTypes.ANON)
-    } catch (error) {
-        logger.error(error)
+    } catch (err) {
+        logger.error({err}, 'Error while processing pending config')
     } finally {
+        if (!__pendingConfig || __pendingConfig.status === ConfigStatus.VOTING) {
+            timeout = 5000
+            syncTimestamp = normalizeTimestamp(Date.now() + timeout, updateIdleTimeframe)
+        } else {
+            syncTimestamp = getNextSyncTimestamp(syncTimestamp)
+            timeout = syncTimestamp - Date.now()
+        }
         setTimeout(() => processPendingConfig(configManager, syncTimestamp), timeout)
     }
 }
@@ -453,11 +450,10 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
         for (const hash of hashes) {
             const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
             if (txResponse?.status !== 'SUCCESS') {
-                logger.error(`Failed to get transaction response by hash: ${hash}`)
-                return false
+                throw new Error(`Failed to get transaction response by hash: ${hash}. Status: ${txResponse?.status}`)
             }
         }
-        return true
+        return
     }
 
     //Transaction hash not found, generate and poll
@@ -475,7 +471,7 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
 
         if (!hash) { //if no hash and no error, than no changes to apply
             __pendingConfig.hasMoreTxns = false
-            return true //No changes to apply
+            return //No changes to apply
         }
 
         __pendingConfig.hasMoreTxns = hasMoreTxns
@@ -483,11 +479,11 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
         if (await pollForTransactionSuccess(hash, maxTime, __currentConfig.envelope.config.network)) {
             logger.info(`Success update. Tx hash: ${hash}, hasMoreTxns: ${hasMoreTxns}`)
             __pendingConfig.txHash = [(__pendingConfig.txHash || ''), hash].join(',').replace(/(^,)|(,$)/g, '')
-            return true
+            return
         }
     }
 
-    return false //Update failed after all attempts
+    throw new Error('Failed to get successful update')
 }
 
 async function pollForTransactionSuccess(hash, maxTime, network) {
@@ -495,10 +491,12 @@ async function pollForTransactionSuccess(hash, maxTime, network) {
         const txResponse = await getUpdateTx(hash, network)
         if (txResponse?.status === 'SUCCESS') {
             return true
+        } else if (txResponse?.status === 'FAILED') {
+            throw new Error(`Failed to get successful update. Tx failed. Hash: ${hash}.`)
         }
         await new Promise(resolve => setTimeout(resolve, 500))
     }
-    return false //Timed out
+    return false
 }
 
 /**
