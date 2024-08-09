@@ -27,6 +27,9 @@
  * @property {string} status - The status
  * @property {Number} expirationDate - The expiration date
  * @property {string} initiator - The initiator
+ * @property {string} txHash - The transaction hash
+ * @property {boolean} isBlockchainUpdate - The is blockchain update flag
+ * @property {boolean} allowEarlySubmission - The allow early submission flag
  */
 
 export {}

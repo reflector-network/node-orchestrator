@@ -392,7 +392,7 @@ async function processPendingConfig(configManager, syncTimestamp) {
                 }
                 break
             case ConfigStatus.PENDING: //try to apply expired pending updates
-                if (__pendingConfig.envelope.timestamp > Date.now()) {
+                if (__pendingConfig.envelope.timestamp > Date.now() && !__pendingConfig.envelope.allowEarlySubmission) {
                     syncTimestamp = __pendingConfig.envelope.timestamp
                     timeout = __pendingConfig.envelope.timestamp - Date.now()
                     return

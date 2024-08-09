@@ -1,6 +1,5 @@
 const mongoose = require('mongoose')
-const {Map} = mongoose.Schema.Types
-const {sortObjectKeys, mapToPlainObject} = require('@reflector/reflector-shared')
+const {sortObjectKeys} = require('@reflector/reflector-shared')
 const signatureSchema = require('./signature')
 
 const nodeSchema = new mongoose.Schema({
@@ -57,7 +56,8 @@ const configEnvelopeSchemaModel = new mongoose.Schema({
         type: Boolean,
         required: false,
         default: false
-    }
+    },
+    allowEarlySubmission: {type: Boolean}
 }, {timestamps: true})
 
 configEnvelopeSchemaModel.methods.toPlainObject = function () {
@@ -71,7 +71,8 @@ configEnvelopeSchemaModel.methods.toPlainObject = function () {
         status: this.status,
         timestamp: this.timestamp,
         txHash: this.txHash,
-        isBlockchainUpdate: this.isBlockchainUpdate
+        isBlockchainUpdate: this.isBlockchainUpdate,
+        allowEarlySubmission: this.allowEarlySubmission
     })
 }
 
