@@ -52,6 +52,8 @@ class NodeIssueItem {
 
 const statistics = []
 
+const proxyMetrics = {}
+
 const issues = {nodeIssues: {}, clusterIssues: {}, oracleIssues: {}}
 
 async function getStatistics() {
@@ -75,11 +77,16 @@ async function getStatistics() {
             }
             requests.push(request())
         }
-        const nodeStatistics = (await Promise.allSettled(requests))
-            .reduce((acc, response) => ({
-                ...acc,
-                [response.value.pubkey]: response.value.statistics
-            }), {})
+        const nodeStatistics = {}
+        const statisticsData = await Promise.allSettled(requests)
+        for (const response of statisticsData) {
+            if (response.value.statistics) {
+                proxyMetrics[response.value.pubkey] = response.value.statistics.proxyMetrics
+                //remove proxy metrics from statistics data, because the statistics data is available for all users
+                response.value.statistics.proxyMetrics = undefined
+            }
+            nodeStatistics[response.value.pubkey] = response.value.statistics
+        }
 
         const configData = container.configManager.getCurrentConfigs()
 
@@ -273,6 +280,10 @@ class StatisticsManager {
 
     getStatistics() {
         return statistics
+    }
+
+    getMetrics() {
+        return {proxyMetrics}
     }
 }
 

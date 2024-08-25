@@ -20,6 +20,22 @@ function statisticsRoutes(app) {
      *               $ref: '#/components/schemas/Statistics'
      */
     registerRoute(app, 'statistics', {method: 'get', authMode: AuthMode.noAuth}, () => statisticsManager.getStatistics())
+    /**
+     * @openapi
+     * /metrics:
+     *   get:
+     *     summary: Get nodes metrics
+     *     tags:
+     *       - Statistics
+     *     responses:
+     *       200:
+     *         description: Metrics
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Statistics'
+     */
+    registerRoute(app, 'metrics', {method: 'get', authMode: AuthMode.auth}, () => statisticsManager.getMetrics())
 }
 
 module.exports = statisticsRoutes
