@@ -52,7 +52,7 @@ class NodeIssueItem {
 
 const statistics = []
 
-const proxyMetrics = {}
+const gatewayMetrics = {}
 
 const issues = {nodeIssues: {}, clusterIssues: {}, oracleIssues: {}}
 
@@ -81,9 +81,9 @@ async function getStatistics() {
         const statisticsData = await Promise.allSettled(requests)
         for (const response of statisticsData) {
             if (response.value.statistics) {
-                proxyMetrics[response.value.pubkey] = response.value.statistics.proxyMetrics
-                //remove proxy metrics from statistics data, because the statistics data is available for all users
-                response.value.statistics.proxyMetrics = undefined
+                gatewayMetrics[response.value.pubkey] = response.value.statistics.gatewayMetrics
+                //remove gateway metrics from statistics data, because the statistics data is available for all users
+                response.value.statistics.gatewayMetrics = undefined
             }
             nodeStatistics[response.value.pubkey] = response.value.statistics
         }
@@ -283,7 +283,7 @@ class StatisticsManager {
     }
 
     getMetrics() {
-        return {proxyMetrics}
+        return {gatewayMetrics}
     }
 }
 
