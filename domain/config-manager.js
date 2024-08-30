@@ -7,7 +7,8 @@ const {
     sortObjectKeys,
     isTimestampValid,
     normalizeTimestamp,
-    UpdateType
+    UpdateType,
+    areAllSignaturesPresent
 } = require('@reflector/reflector-shared')
 const ContractTypes = require('@reflector/reflector-shared/models/configs/contract-type')
 const mongoose = require('mongoose')
@@ -392,33 +393,49 @@ async function processPendingConfig(configManager, syncTimestamp) {
                 }
                 break
             case ConfigStatus.PENDING: //try to apply expired pending updates
-                if (__pendingConfig.envelope.timestamp > Date.now() && !__pendingConfig.envelope.allowEarlySubmission) {
-                    syncTimestamp = __pendingConfig.envelope.timestamp
-                    timeout = __pendingConfig.envelope.timestamp - Date.now()
-                    return
-                }
-                if (__pendingConfig.isBlockchainUpdate) { //if now txHash, than tx is not required for update, so just change status
-                    await waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp)
-                    if (__pendingConfig.hasMoreTxns) { //if update failed, or there are more txns to be processed
-                        return //wait for next sync
+                {
+                    const updateTimeReached = __pendingConfig.envelope.timestamp < syncTimestamp
+                    if (!(updateTimeReached || __pendingConfig.envelope.allowEarlySubmission))
+                        return
+
+                    if (!updateTimeReached) { //if update time is not reached, check if all signatures are present
+                        if (!areAllSignaturesPresent(
+                            [...__currentConfig.envelope.config.nodes.keys()],
+                            [...__pendingConfig.envelope.config.nodes.keys()],
+                            __pendingConfig.envelope.signatures)
+                        )
+                            return
                     }
-                }
-                if (__currentConfig) {
-                    const session = await mongoose.startSession()
-                    session.startTransaction()
-                    try {
-                        await ConfigEnvelopeModel.findByIdAndUpdate({_id: __currentConfig.id}, {status: ConfigStatus.REPLACED}).exec()
-                        await ConfigEnvelopeModel.findByIdAndUpdate(
-                            {_id: __pendingConfig.id},
-                            {status: ConfigStatus.APPLIED, txHash: __pendingConfig.txHash}
-                        ).exec()
-                        await session.commitTransaction()
-                        __pendingConfig.status = ConfigStatus.APPLIED
-                    } catch (error) {
-                        await session.abortTransaction()
-                        throw error
-                    } finally {
-                        await session.endSession()
+
+                    if (__pendingConfig.envelope.timestamp > Date.now() && !__pendingConfig.envelope.allowEarlySubmission) {
+                        syncTimestamp = __pendingConfig.envelope.timestamp
+                        timeout = __pendingConfig.envelope.timestamp - Date.now()
+                        return
+                    }
+
+                    if (__pendingConfig.isBlockchainUpdate) { //if now txHash, than tx is not required for update, so just change status
+                        await waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTimestamp)
+                        if (__pendingConfig.hasMoreTxns) { //if update failed, or there are more txns to be processed
+                            return //wait for next sync
+                        }
+                    }
+                    if (__currentConfig) {
+                        const session = await mongoose.startSession()
+                        session.startTransaction()
+                        try {
+                            await ConfigEnvelopeModel.findByIdAndUpdate({_id: __currentConfig.id}, {status: ConfigStatus.REPLACED}).exec()
+                            await ConfigEnvelopeModel.findByIdAndUpdate(
+                                {_id: __pendingConfig.id},
+                                {status: ConfigStatus.APPLIED, txHash: __pendingConfig.txHash}
+                            ).exec()
+                            await session.commitTransaction()
+                            __pendingConfig.status = ConfigStatus.APPLIED
+                        } catch (error) {
+                            await session.abortTransaction()
+                            throw error
+                        } finally {
+                            await session.endSession()
+                        }
                     }
                 }
                 break

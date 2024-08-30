@@ -161,15 +161,15 @@ class SubscriptionContractManager {
                             break
                         case 'charged':
                             {
-                                const timestamp = BigInt(event.value[0])
-                                const id = event.value[1].toString()
+                                const timestamp = BigInt(event.value[2])
+                                const id = event.value[0].toString()
                                 logger.debug(`Subscription ${id} charged. Contract ${this.contractId}`)
                                 if (this.__subscriptions.has(id)) {
                                     const subscription = this.__subscriptions.get(id)
                                     if (BigInt(subscription.updated) >= timestamp)
                                         continue
                                     subscription.updated = timestamp.toString()
-                                    subscription.balance -= Number(event.value[2].toString())
+                                    subscription.balance -= Number(event.value[1].toString())
                                 }
                             }
                             break
