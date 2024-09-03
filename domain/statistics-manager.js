@@ -85,6 +85,11 @@ async function getStatistics() {
                 //remove gateways metrics from statistics data, because the statistics data is available for all users
                 response.value.statistics.gatewaysMetrics = undefined
             }
+            if (response.value.statistics) {
+                for (const oracleId in response.value.statistics.oracleStatistics) {
+                    response.value.statistics.oracleStatistics[oracleId].oracleId = oracleId
+                }
+            }
             nodeStatistics[response.value.pubkey] = response.value.statistics
         }
 
