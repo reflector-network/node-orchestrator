@@ -143,7 +143,7 @@ class SubscriptionContractManager {
                             break
                         case 'suspended':
                             {
-                                const id = event.value[1].toString()
+                                const id = event.value[0].toString()
                                 logger.debug(`Subscription ${id} ${eventTopic}. Contract ${this.contractId}`)
                                 if (this.__subscriptions.has(id)) {
                                     const subscription = this.__subscriptions.get(id)
@@ -153,7 +153,7 @@ class SubscriptionContractManager {
                             break
                         case 'cancelled':
                             {
-                                const id = event.value[1].toString()
+                                const id = event.value.toString()
                                 logger.debug(`Subscription ${id} ${eventTopic}. Contract ${this.contractId}`)
                                 if (this.__subscriptions.has(id))
                                     this.__subscriptions.delete(id)
@@ -161,8 +161,8 @@ class SubscriptionContractManager {
                             break
                         case 'charged':
                             {
-                                const timestamp = BigInt(event.value[2])
                                 const id = event.value[0].toString()
+                                const timestamp = BigInt(event.value[2])
                                 logger.debug(`Subscription ${id} charged. Contract ${this.contractId}`)
                                 if (this.__subscriptions.has(id)) {
                                     const subscription = this.__subscriptions.get(id)
