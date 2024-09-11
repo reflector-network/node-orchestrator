@@ -53,7 +53,10 @@ async function validateAuth(req) {
     const isValid = keyPair.verify(messageHash, Buffer.from(signature, 'hex'))
     if (!isValid)
         throw unauthorized('Invalid signature')
+    req.payload = payload
     req.pubkey = pubkey
+    req.nonce = nonce
+    req.signature = signature
     await nonceProvider.update(pubkey, nonce)
 }
 

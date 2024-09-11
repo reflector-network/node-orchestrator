@@ -595,7 +595,7 @@ function getTimestamp(timestamp, minDate) {
     if (timestamp)
         return timestamp
     minDate = normalizeTimestamp(Math.max(minDate || Date.now()), updateIdleTimeframe)
-    return minDate + 1000 * 60 * 10 //10 minutes
+    return minDate + 1000 * 60 * 3 //10 minutes
 }
 
 /**
@@ -626,7 +626,8 @@ function cleanupConfig(config) {
     for (const [, node] of Object.entries(config.config.nodes)) {
         delete node.url
     }
-    delete config.config.wasmHash
+    if (config.config.rsaKey)
+        delete config.config.rsaKey
     return config
 }
 

@@ -1,5 +1,7 @@
+const {sign} = require('@stellar/stellar-sdk')
 const container = require('../../domain/container')
 const {registerRoute} = require('../route')
+const MessageTypes = require('../ws/handlers/message-types')
 
 
 function settingsRoutes(app) {
@@ -54,6 +56,63 @@ function settingsRoutes(app) {
         return settings
     })
 
+
+    /**
+     * @openapi
+     * /gateways:
+     *   get:
+     *     summary: Get current node gateways
+     *     tags:
+     *       - Settings
+     *     security:
+     *       - ed25519Auth: []
+     *     responses:
+     *       200:
+     *         description: Ok
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/OkResult'
+     *
+     */
+    registerRoute(app, 'gateways', {method: 'get'}, async (req) => {
+        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        if (!node)
+            throw new Error('Node not found')
+        const data = {
+            data: {payload: req.payload},
+            signature: req.signature
+        }
+        const gateways = await node.send({type: MessageTypes.GATEWAYS_GET, data})
+        return gateways
+    })
+
+
+    /**
+     * @openapi
+     * /gateways:
+     *   post:
+     *     summary: Post current node gateways
+     *     tags:
+     *       - Settings
+     *     security:
+     *       - ed25519Auth: []
+     *     responses:
+     *       200:
+     *         description: Ok
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/OkResult'
+     *
+     */
+    registerRoute(app, 'gateways', {method: 'post'}, async (req) => {
+        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        if (!node)
+            throw new Error('Node not found')
+        const data = {data: {...req.body, nonce: req.nonce}, signature: req.signature}
+        await node.send({type: MessageTypes.GATEWAYS_POST, data})
+    })
 }
 
 module.exports = settingsRoutes
