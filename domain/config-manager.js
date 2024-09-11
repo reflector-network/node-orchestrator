@@ -626,8 +626,8 @@ function cleanupConfig(config) {
     for (const [, node] of Object.entries(config.config.nodes)) {
         delete node.url
     }
-    if (config.config.rsaKey)
-        delete config.config.rsaKey
+    if (config.config.clusterSecret)
+        delete config.config.clusterSecret
     return config
 }
 
