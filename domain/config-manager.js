@@ -623,6 +623,7 @@ async function createConfig(configItem, nodesCount, isInitConfig, isBlockchainUp
 function cleanupConfig(config) {
     if (!config)
         return null
+    config = new ConfigEnvelope(config).toPlainObject(false)
     for (const [, node] of Object.entries(config.config.nodes)) {
         delete node.url
     }
