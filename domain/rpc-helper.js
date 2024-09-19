@@ -1,6 +1,5 @@
 const {SorobanRpc, Account} = require('@stellar/stellar-sdk')
-const {buildUpdateTransaction, getSubscriptionsContractState, getSubscriptions} = require('@reflector/reflector-shared')
-const {getSubscriptionById} = require('@reflector/reflector-shared/helpers/entries-helper')
+const {buildUpdateTransaction, getSubscriptionsContractState, getSubscriptions, getSubscriptionById} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('./container')
 

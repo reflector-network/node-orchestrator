@@ -8,9 +8,9 @@ const {
     isTimestampValid,
     normalizeTimestamp,
     UpdateType,
-    areAllSignaturesPresent
+    areAllSignaturesPresent,
+    ContractTypes
 } = require('@reflector/reflector-shared')
-const ContractTypes = require('@reflector/reflector-shared/models/configs/contract-type')
 const mongoose = require('mongoose')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
 const MessageTypes = require('../server/ws/handlers/message-types')
