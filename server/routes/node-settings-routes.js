@@ -113,6 +113,65 @@ function settingsRoutes(app) {
         const data = {data: {...req.body, nonce: req.nonce}, signature: req.signature}
         await node.send({type: MessageTypes.GATEWAYS_POST, data})
     })
+
+    /**
+     * @openapi
+     * /gateways:
+     *   post:
+     *     summary: Validate gateways
+     *     tags:
+     *       - Settings
+     *     security:
+     *       - ed25519Auth: []
+     *     requestBody:
+     *       content:
+     *         application/json
+     *     responses:
+     *       200:
+     *         description: Ok
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/OkResult'
+     *
+     */
+    registerRoute(app, 'validate-gateways', {method: 'post'}, async (req) => {
+        const {urls, validationKey} = req.body
+        const result = {}
+        for (const url of urls) {
+            const info = await validateGateway(url, validationKey)
+            result[url] = info
+        }
+        return result
+    })
+}
+
+async function validateGateway(address, validationKey) {
+    const validatedGateways = {}
+    const prev = validatedGateways[address]
+    if (prev?.status === 'healthy')
+        return prev
+    const info = {status: 'unreachable'}
+    validatedGateways[address] = info
+    try {
+        const {version} = await fetchGateway(address + '/', validationKey)
+        info.version = version
+        info.status = 'alive'
+
+        const {serverTime} = await fetchGateway(address + '/gateway?url=' + encodeURIComponent('https://api.binance.com/api/v3/time'), validationKey)
+        if (!serverTime)
+            throw new Error('Failed to check proxy connection with Binance API')
+        info.status = 'healthy'
+    } catch (e) {
+        console.error(e)
+        info.error = e.message
+    }
+    return info
+}
+
+async function fetchGateway(address, validationKey) {
+    const res = await fetch(address, {headers: {'x-gateway-validation': validationKey}})
+    return await res.json()
 }
 
 module.exports = settingsRoutes
