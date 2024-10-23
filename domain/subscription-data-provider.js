@@ -30,11 +30,11 @@ const {getSubscriptionEvents, loadSubscriptions} = require('./rpc-helper')
 /**
  * @param {string} contractId - contract id
  * @param {string} network - network
- * @param {string} [cursor] - cursor
- * @returns {Promise<{events: any[], pagingToken: string}>}
+ * @param {number} lastProcessedLedger - last processed ledger
+ * @returns {Promise<{events: any[], lastLedger: number}>}
  * */
-async function loadLastEvents(contractId, network, cursor = null) {
-    const {events: rawEvents, pagingToken} = await getSubscriptionEvents(contractId, 60 * 60, cursor, network)
+async function loadLastEvents(contractId, network, lastProcessedLedger) {
+    const {events: rawEvents, lastLedger} = await getSubscriptionEvents(contractId, lastProcessedLedger, network)
     const events = rawEvents
         .map(raw => {
             const data = {
@@ -44,7 +44,7 @@ async function loadLastEvents(contractId, network, cursor = null) {
             }
             return data
         })
-    return {events, pagingToken}
+    return {events, lastLedger}
 }
 
 class SubscriptionContractManager {
@@ -63,9 +63,9 @@ class SubscriptionContractManager {
     __subscriptions = new Map()
 
     /**
-     * @type {string}
+     * @type {number}
      */
-    __pagingToken = null
+    __lastLedger = null
 
     __workerTimeoutId = null
 
@@ -122,10 +122,10 @@ class SubscriptionContractManager {
 
     async __processLastEvents() {
         try {
-            logger.debug(`Processing events for contract ${this.contractId} from ${this.__pagingToken}`)
-            const {events, pagingToken} = await loadLastEvents(this.contractId, this.network, this.__pagingToken)
-            logger.debug(`Loaded ${events.length} events for contract ${this.contractId}, new paging token: ${pagingToken}`)
-            this.__pagingToken = pagingToken
+            logger.debug(`Processing events for contract ${this.contractId} from ${this.__lastLedger}`)
+            const {events, lastLedger} = await loadLastEvents(this.contractId, this.network, this.__lastLedger)
+            logger.debug(`Loaded ${events.length} events for contract ${this.contractId}, new last ledger: ${lastLedger}`)
+            this.__lastLedger = lastLedger
 
             const triggerEvents = events
             for (const event of triggerEvents) {

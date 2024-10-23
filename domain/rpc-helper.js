@@ -92,16 +92,15 @@ async function getAccountSequence(currentConfig) {
 
 /**
  * @param {string} contractId - contract id
- * @param {number} depth - depth in seconds (only used when pagingToken is not provided)
- * @param {string} pagingToken - paging token
- * @param {string} network - network
- * @returns {Promise<{events: any[], pagingToken: string}>}
+ * @param {number} lastProcessedLedger - last processed ledger
+ * @param {string} network - soroban rpc urls
+ * @returns {Promise<{events: any[], lastLedger: number}>}
  */
-async function getSubscriptionEvents(contractId, depth, pagingToken, network) {
+async function getSubscriptionEvents(contractId, lastProcessedLedger, network) {
     const limit = 100
     const {urls} = container.appConfig.getNetworkConfig(network)
     const lastLedger = (await makeServerRequest(urls, async (server) => await server.getLatestLedger())).sequence
-    const startLedger = lastLedger - Math.ceil(depth / 5) //1 ledger is closed every 5 seconds
+    const startLedger = lastProcessedLedger ? lastProcessedLedger : lastLedger - 180 //180 is 15 minutes in ledgers
     const loadEvents = async (startLedger, cursor) => {
         const d = await makeServerRequest(urls, async (server) => {
             startLedger = cursor ? undefined : startLedger
@@ -112,16 +111,19 @@ async function getSubscriptionEvents(contractId, depth, pagingToken, network) {
     }
     let events = []
     let hasMore = true
+    let latestLedger = null
+    let pagingToken = null
     while (hasMore) {
         const eventsResponse = (await loadEvents(startLedger, pagingToken))
         if (eventsResponse.events.length < limit)
             hasMore = false
+        latestLedger = eventsResponse.latestLedger
         if (eventsResponse.events.length === 0)
             break
         events = events.concat(eventsResponse.events)
         pagingToken = eventsResponse.events[eventsResponse.events.length - 1].pagingToken
     }
-    return {events, pagingToken}
+    return {events, lastLedger: latestLedger}
 }
 
 /**

@@ -160,7 +160,7 @@ function collectIssues(nodeStatistics, configData) {
         const contractData = configData.currentConfig?.config?.config.contracts[oracleId]
         if (!contractData)
             continue
-        if (now - lastOracleTimestamp > contractData.timeframe * 2) { //if last oracle timestamp is older than 2 timeframes
+        if (now - lastOracleTimestamp > (contractData.timeframe + contractData.timeframe * .2) * 2) { //if last oracle timestamp is older than 2 timeframes + 20% threshold
             logger.debug(`Price update issue with oracle ${oracleId}, lastOracleTimestamp: ${lastOracleTimestamp}.`)
             oracleIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new NodeIssueItem(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue with oracle ${oracleId}.`, now)}
         }
