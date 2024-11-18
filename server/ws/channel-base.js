@@ -82,6 +82,10 @@ class ChannelBase {
                 }
             }
             try {
+                if (!this.__ws || this.__ws.readyState !== WebSocket.OPEN) {
+                    reject(new Error(`Connection is not open. ${this.__getConnectionInfo()}`))
+                    return
+                }
                 this.__ws.send(JSON.stringify(message), (err) => {
                     if (err) {
                         reject(err)

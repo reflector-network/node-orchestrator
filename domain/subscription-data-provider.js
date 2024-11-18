@@ -130,7 +130,9 @@ class SubscriptionContractManager {
             const triggerEvents = events
             for (const event of triggerEvents) {
                 try {
-                    const eventTopic = event.topic[1]
+                    const eventTopic = event.topic[1] === "triggers" //triggers topic appears in new version of the contract
+                        ? event.topic[2]
+                        : event.topic[1]
                     switch (eventTopic) {
                         case 'created':
                         case 'deposited':
@@ -138,22 +140,13 @@ class SubscriptionContractManager {
                                 const [id, rawSubscription] = event.value
                                 logger.debug(`Subscription ${id} ${eventTopic}. Contract ${this.contractId}`)
                                 rawSubscription.id = id
-                                this.__setSubscription(rawSubscription)
+                                await this.__setSubscription(rawSubscription)
                             }
                             break
                         case 'suspended':
-                            {
-                                const id = event.value[0].toString()
-                                logger.debug(`Subscription ${id} ${eventTopic}. Contract ${this.contractId}`)
-                                if (this.__subscriptions.has(id)) {
-                                    const subscription = this.__subscriptions.get(id)
-                                    subscription.status = 1
-                                }
-                            }
-                            break
                         case 'cancelled':
                             {
-                                const id = event.value.toString()
+                                const id = event.value[0] || event.value
                                 logger.debug(`Subscription ${id} ${eventTopic}. Contract ${this.contractId}`)
                                 if (this.__subscriptions.has(id))
                                     this.__subscriptions.delete(id)
@@ -161,19 +154,17 @@ class SubscriptionContractManager {
                             break
                         case 'charged':
                             {
-                                const id = event.value[0].toString()
-                                const timestamp = BigInt(event.value[2])
+                                const id = event.value[0]
+                                const timestamp = event.value[2]
                                 logger.debug(`Subscription ${id} charged. Contract ${this.contractId}`)
                                 if (this.__subscriptions.has(id)) {
                                     const subscription = this.__subscriptions.get(id)
-                                    if (BigInt(subscription.updated) >= timestamp)
-                                        continue
-                                    subscription.updated = timestamp.toString()
-                                    subscription.balance -= Number(event.value[1].toString())
+                                    subscription.lastCharge = Number(timestamp)
                                 }
                             }
                             break
                         case 'triggered': //do nothing
+                        case 'updated':
                             break
                         default:
                             logger.error(`Unknown event type: ${eventTopic}`)
