@@ -1,4 +1,4 @@
-const {SorobanRpc, Account} = require('@stellar/stellar-sdk')
+const {rpc, Account} = require('@stellar/stellar-sdk')
 const {buildUpdateTransaction, getSubscriptionsContractState, getSubscriptions, getSubscriptionById} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('./container')
@@ -11,7 +11,7 @@ async function makeServerRequest(urls, requestFn) {
     const errors = []
     for (const url of urls) {
         try {
-            const server = new SorobanRpc.Server(url, {allowHttp: true})
+            const server = new rpc.Server(url, {allowHttp: true})
             return await requestFn(server, url)
         } catch (err) {
             logger.debug(`Request to ${url} failed. Error: ${err.message}`)
