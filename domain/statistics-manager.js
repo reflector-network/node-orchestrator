@@ -317,6 +317,10 @@ class StatisticsManager {
         return statistics
     }
 
+    /**
+     * @param {{page: number, limit: number, sortOrder: string}} options - pagination options
+     * @returns {Promise<any>} - metrics
+     */
     async getMetrics(options = {}) {
         const {
             page = 1,
@@ -325,7 +329,6 @@ class StatisticsManager {
         } = options
         const skip = (page - 1) * limit
 
-        //Build sort object
         const sort = {_id: sortOrder === 'asc' ? 1 : -1}
         return await MetricsModel.find()
             .sort(sort).limit(limit).skip(skip)
