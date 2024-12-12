@@ -204,6 +204,7 @@ class ChannelBase {
             this.__isValidated = false
         }
         logger.debug(`${this.__getConnectionInfo()} closed with code ${code} and reason ${reason || 'abnormal'}`)
+        container.connectionManager.remove(this.id)
     }
 
     __onError(error) {

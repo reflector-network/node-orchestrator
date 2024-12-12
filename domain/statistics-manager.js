@@ -2,6 +2,7 @@
 const {hasMajority} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const MessageTypes = require('../server/ws/handlers/message-types')
+const MetricsModel = require('../persistence-layer/models/metrics-model')
 const container = require('./container')
 const ConfigStatus = require('./config-status')
 
@@ -93,6 +94,8 @@ async function getStatistics() {
             nodeStatistics[response.value.pubkey] = response.value.statistics
         }
 
+        await saveMetrics()
+
         const configData = container.configManager.getCurrentConfigs()
 
         const issuesData = collectIssues(nodeStatistics, configData)
@@ -109,6 +112,32 @@ async function getStatistics() {
         return null
     } finally {
         setTimeout(getStatistics, 60000)
+    }
+}
+
+async function cleanMetrics() {
+    try {
+        const now = new Date()
+        await MetricsModel.deleteMany({
+            createdAt: {$lt: now - 1000 * 60 * 60 * 24 * 7}}
+        ) //delete metrics older than 7 days
+    } catch (e) {
+        logger.error(`Error cleaning metrics: ${e.message}`)
+    } finally {
+        setTimeout(cleanMetrics, 1000 * 60 * 60 * 6) //clean metrics every 6 hours
+    }
+}
+
+async function saveMetrics() {
+    try {
+        if (Object.keys(gatewaysMetrics).length === 0)
+            return
+        const metrics = new MetricsModel({
+            data: gatewaysMetrics
+        })
+        await metrics.save()
+    } catch (e) {
+        logger.error(`Error saving metrics: ${e.message}`)
     }
 }
 
@@ -281,14 +310,25 @@ class StatisticsManager {
 
     constructor() {
         setTimeout(getStatistics, 10000)
+        cleanMetrics()
     }
 
     getStatistics() {
         return statistics
     }
 
-    getMetrics() {
-        return {gatewaysMetrics}
+    async getMetrics(options = {}) {
+        const {
+            page = 1,
+            limit = 10,
+            sortOrder = 'desc'
+        } = options
+        const skip = (page - 1) * limit
+
+        //Build sort object
+        const sort = {_id: sortOrder === 'asc' ? 1 : -1}
+        return await MetricsModel.find()
+            .sort(sort).limit(limit).skip(skip)
     }
 }
 

@@ -32,6 +32,7 @@ class AppConfig {
         this.__assignDefaultNodes(rawConfig.defaultNodes)
         this.__assignNetworks(rawConfig.networks)
         this.__assignEmailConfig(rawConfig.emailSettings)
+        this.__assignMonitoringKey(rawConfig.monitoringKey)
     }
 
     /**
@@ -63,6 +64,11 @@ class AppConfig {
      * @type {EmailSettings}
      */
     emailSettings = null
+
+    /**
+     * @param {string[]} monitoringKey
+     */
+    monitoringKey = null
 
     __assignDefaultNodes(defaultNodes) {
         if (!defaultNodes)
@@ -110,6 +116,10 @@ class AppConfig {
 
     __assignEmailConfig(rawEmailSettings) {
         this.emailSettings = new EmailSettings(rawEmailSettings)
+    }
+
+    __assignMonitoringKey(monitoringKey) {
+        this.monitoringKey = monitoringKey
     }
 }
 

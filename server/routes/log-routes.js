@@ -2,6 +2,13 @@ const container = require('../../domain/container')
 const {registerRoute} = require('../route')
 const MessageTypes = require('../ws/handlers/message-types')
 
+function getTargetNode(req) {
+    let targetNode = req.pubkey
+    if (targetNode === container.appConfig.monitoringKey && req.query.node) {
+        targetNode = req.query.node
+    }
+    return targetNode
+}
 
 function logRoutes(app) {
     /**
@@ -30,7 +37,7 @@ function logRoutes(app) {
      *               $ref: '#/components/schemas/OkResult'
      */
     registerRoute(app, 'logs/trace', {method: 'post'}, async (req) => {
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        const node = container.connectionManager.getNodeConnection(getTargetNode(req))
         if (!node)
             throw new Error('Node not found')
         const {isTraceEnabled} = req.body
@@ -59,7 +66,7 @@ function logRoutes(app) {
      *
      */
     registerRoute(app, 'logs', {}, async (req) => {
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        const node = container.connectionManager.getNodeConnection(getTargetNode(req))
         if (!node)
             throw new Error('Node not found')
         const logs = await node.send({type: MessageTypes.LOGS_REQUEST})
@@ -95,8 +102,7 @@ function logRoutes(app) {
      */
     registerRoute(app, 'logs/:logname', {}, async (req, res) => {
         const logFileName = req.params.logname
-
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
+        const node = container.connectionManager.getNodeConnection(getTargetNode(req))
         if (!node)
             throw new Error('Node not found')
         const logData = await node.send({type: MessageTypes.LOG_FILE_REQUEST, data: {logFileName}})

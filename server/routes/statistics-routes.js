@@ -35,7 +35,7 @@ function statisticsRoutes(app) {
      *             schema:
      *               $ref: '#/components/schemas/Statistics'
      */
-    registerRoute(app, 'metrics', {method: 'get', authMode: AuthMode.auth}, () => statisticsManager.getMetrics())
+    registerRoute(app, 'metrics', {method: 'get', authMode: AuthMode.auth}, async (req) => (await statisticsManager.getMetrics(req.query)).map(m => m.toPlainObject()))
 }
 
 module.exports = statisticsRoutes
