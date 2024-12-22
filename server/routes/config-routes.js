@@ -128,6 +128,24 @@ function configRoutes(app) {
      *         description: Config not found
      */
     registerRoute(app, 'nodes', {authMode: AuthMode.noAuth}, () => container.configManager.allNodePubkeys())
+
+
+    /**
+     * @openapi
+     * /monitoring-key:
+     *   get:
+     *     summary: Get node public key for monitoring
+     *     tags:
+     *       - Config
+     *     responses:
+     *       200:
+     *         description: Node public key for monitoring
+     *         content:
+     *           string
+     *       404:
+     *         description: Config not found
+     */
+    registerRoute(app, 'monitoring-key', {authMode: AuthMode.noAuth}, () => container.appConfig.monitoringKey)
 }
 
 module.exports = configRoutes

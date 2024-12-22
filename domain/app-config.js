@@ -66,7 +66,7 @@ class AppConfig {
     emailSettings = null
 
     /**
-     * @param {string[]} monitoringKey
+     * @param {string} monitoringKey
      */
     monitoringKey = null
 
