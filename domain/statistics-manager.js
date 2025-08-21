@@ -3,6 +3,7 @@ const {hasMajority} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const MetricsModel = require('../persistence-layer/models/metrics-model')
+const {getTransactions} = require('../utils/horizon-helper')
 const container = require('./container')
 const ConfigStatus = require('./config-status')
 
@@ -104,7 +105,8 @@ async function getStatistics() {
             nodeStatistics,
             currentTimestamp: Date.now(),
             currentConfigHash: configData?.currentConfig?.hash,
-            pendingConfigHash: configData?.pendingConfig?.hash
+            pendingConfigHash: configData?.pendingConfig?.hash,
+            hashes: __lastTransactions
         })
         addIssues(issuesData, container.configManager.allNodePubkeys().length)
     } catch (e) {
@@ -305,12 +307,41 @@ function issuesToHtml(issues) {
     }
     return issuesHtml
 }
+let __lastTransactions = {}
+
+async function transactionsWorker() {
+    try {
+        const config = container?.configManager?.currentConfig
+        if (!config) return
+
+        const transactionRequests = [...config.contracts.values()]
+            .map(({contractId, admin}) => [contractId, admin])
+            .concat([[null, config.systemAccount]])
+            .reduce((requests, [contractId, account]) => {
+                requests.set(contractId, getTransactions(account, config.network))
+                return requests
+            }, new Map())
+
+        const transactionResults = await Promise.all([...transactionRequests.values()])
+        __lastTransactions = [...transactionRequests.entries()].reduce((result, [contractId], index) => {
+            result[contractId] = transactionResults[index]
+            return result
+        }, {})
+
+        logger.debug(`Transactions worker completed. Found transactions for ${Object.keys(__lastTransactions).length} contracts.`)
+    } catch (error) {
+        logger.error(`Error getting transactions: ${error.message}`)
+    } finally {
+        setTimeout(transactionsWorker, 1000 *  5) //every 5 minutes
+    }
+}
 
 class StatisticsManager {
 
     constructor() {
         setTimeout(getStatistics, 10000)
         cleanMetrics()
+        transactionsWorker()
     }
 
     getStatistics() {

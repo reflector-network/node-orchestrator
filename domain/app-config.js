@@ -98,13 +98,15 @@ class AppConfig {
                 throw new Error(`${networkName}.url is undefined`)
             if (!network.passphrase)
                 throw new Error(`${networkName}.passphrase is undefined`)
-            this.networks.set(networkName, {urls: network.urls, passphrase: network.passphrase})
+            if (!network.horizonUrls)
+                throw new Error(`${networkName}.horizonUrls is undefined`)
+            this.networks.set(networkName, {urls: network.urls, passphrase: network.passphrase, horizonUrls: network.horizonUrls})
         }
     }
 
     /**
      * @param {string} network
-     * @returns {{urls: string[], passphrase: string}}
+     * @returns {{urls: string[], passphrase: string, horizonUrls: string[]}}
      */
     getNetworkConfig(network) {
         if (!network)

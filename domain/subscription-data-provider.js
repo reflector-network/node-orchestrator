@@ -1,6 +1,7 @@
 const {scValToNative} = require('@stellar/stellar-sdk')
 const logger = require('../logger')
-const {getSubscriptionEvents, loadSubscriptions} = require('./rpc-helper')
+const {getSubscriptionEvents, loadSubscriptions} = require('../utils/rpc-helper')
+const container = require('./container')
 
 /**
  * @typedef {import('@reflector/reflector-shared').OracleConfig} OracleConfig
@@ -34,7 +35,11 @@ const {getSubscriptionEvents, loadSubscriptions} = require('./rpc-helper')
  * @returns {Promise<{events: any[], lastLedger: number}>}
  * */
 async function loadLastEvents(contractId, network, lastProcessedLedger) {
-    const {events: rawEvents, lastLedger} = await getSubscriptionEvents(contractId, lastProcessedLedger, network)
+    const {events: rawEvents, lastLedger} = await getSubscriptionEvents(
+        contractId,
+        lastProcessedLedger,
+        container.appConfig.getNetworkConfig(network).urls
+    )
     const events = rawEvents
         .map(raw => {
             const data = {
@@ -83,7 +88,10 @@ class SubscriptionContractManager {
     }
 
     async __loadSubscriptionsData() {
-        const rawData = await loadSubscriptions(this.contractId, this.network)
+        const rawData = await loadSubscriptions(
+            this.contractId,
+            container.appConfig.getNetworkConfig(this.network).urls
+        )
         for (const raw of rawData)
             try {
                 if (raw) //only active subscriptions

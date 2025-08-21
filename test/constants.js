@@ -8,11 +8,13 @@ const constatns = {
     networks: {
         testnet: {
             urls: ["https://horizon-testnet.stellar.org"],
-            passphrase: "Test SDF Network ; September 2015"
+            passphrase: "Test SDF Network ; September 2015",
+            horizonUrls: ["https://horizon-testnet.stellar.org"]
         },
         public: {
             urls: ["https://horizon.stellar.org"],
-            passphrase: "Public Global Stellar Network ; September 2015"
+            passphrase: "Public Global Stellar Network ; September 2015",
+            horizonUrls: ["https://horizon.stellar.org"]
         }
     },
     dbConnectionString: "mongodb://127.0.0.1:27017/reflector-orchestrator-test",

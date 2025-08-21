@@ -19,10 +19,10 @@
     "url": "git@github.com:reflector-network/node-orchestrator.git"
   },
   "dependencies": {
-    "@reflector/oracle-client": "github:reflector-network/oracle-client#v6.1.0",
-    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v6.1.0",
-    "@stellar/stellar-sdk": "13.3.0",
-    "axios": "1.9.0",
+    "@reflector/oracle-client": "github:reflector-network/oracle-client#v7.0.0-rc4",
+    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.0.0-rc4",
+    "@stellar/stellar-sdk": "14.0.0",
+    "axios": "1.11.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "express": "^4.18.2",
