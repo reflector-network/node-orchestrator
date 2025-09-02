@@ -33,6 +33,7 @@ class AppConfig {
         this.__assignNetworks(rawConfig.networks)
         this.__assignEmailConfig(rawConfig.emailSettings)
         this.__assignMonitoringKey(rawConfig.monitoringKey)
+        this.__assignLokiUrl(rawConfig.lokiUrl)
     }
 
     /**
@@ -69,6 +70,11 @@ class AppConfig {
      * @param {string} monitoringKey
      */
     monitoringKey = null
+
+    /**
+     * @type {string}
+     */
+    lokiUrl = null
 
     __assignDefaultNodes(defaultNodes) {
         if (!defaultNodes)
@@ -122,6 +128,10 @@ class AppConfig {
 
     __assignMonitoringKey(monitoringKey) {
         this.monitoringKey = monitoringKey
+    }
+
+    __assignLokiUrl(lokiUrl) {
+        this.lokiUrl = lokiUrl
     }
 }
 
