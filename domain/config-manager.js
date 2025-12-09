@@ -480,7 +480,7 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
     //Transaction hash not found, generate and poll
     const accountSequence = await getAccountSequence(__currentConfig.envelope.config)
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
         const {hash, maxTime, hasMoreTxns} = await getUpdateTxHash(
             __currentConfig.envelope.config,
             __pendingConfig.envelope.config,

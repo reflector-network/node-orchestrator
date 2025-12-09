@@ -6,7 +6,7 @@ const container = require('./container')
 
 const baseUpdateFee = 10000000
 
-const txTimeout = 20000
+const txTimeout = 15000
 
 function __getMaxTime(syncTimestamp, iteration) {
     const maxTime = syncTimestamp + (txTimeout * iteration)
