@@ -1,4 +1,4 @@
-const {rpc} = require('@stellar/stellar-sdk')
+const {rpc, xdr, scValToNative} = require('@stellar/stellar-sdk')
 const {getSubscriptionsContractState, getSubscriptions, getSubscriptionById} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('../domain/container')
@@ -92,4 +92,68 @@ async function loadSubscription(contractId, id, urls) {
     return await getSubscriptionById(contractId, urls, id)
 }
 
-module.exports = {getUpdateTx, getAccountSequence, getSubscriptionEvents, loadSubscriptions, loadSubscription}
+/**
+ * @param {string} txHash - transaction hash
+ * @param {string[]} urls - soroban rpc urls
+ * @returns {Promise<any|null>}
+ */
+async function loadTransaction(txHash, urls) {
+    try {
+        const requestFn = async (server) => await server.getTransaction(txHash)
+        const txResponse = await makeServerRequest(urls, getServer, requestFn)
+        return txResponse
+    } catch (err) {
+        if (err.response?.status === 404)
+            logger.error(`Transaction ${txHash} not found`)
+        return null
+    }
+}
+
+/**
+ * Returns contract instance
+ * @param {string} contractId - contract id
+ * @param {string[]} urls - soroban rpc urls
+ * @returns {xdr.ScContractInstance|null}
+ */
+async function getContractInstance(contractId, urls) {
+    const key = xdr.ScVal.scvLedgerKeyContractInstance()
+    const contractDataRequestFn = async (server) => await server.getContractData(contractId, key, rpc.Durability.Persistent)
+    const contractData = await makeServerRequest(contractDataRequestFn, urls)
+    if (!contractData)
+        return null
+    return contractData.val.contractData().val().instance()
+}
+
+/**
+ * Returns native storage
+ * @param {xdr.ScMapEntry[]} values - values
+ * @param {string[]} keys - props to extract
+ * @returns {object}
+ */
+function getNativeStorage(values, keys) {
+    const storage = {}
+    if (values && keys.length > 0)
+        for (const value of values) {
+            const key = scValToNative(value.key())
+            const keyIndex = keys.indexOf(key)
+            if (keyIndex < 0)
+                continue
+            const val = scValToNative(value.val())
+            storage[key] = val
+            //remove found key
+            keys.splice(keyIndex, 1)
+            if (keys.length < 1)
+                break //all keys found
+        }
+    return storage
+}
+
+async function getContractEntries(contract, urls, keys) {
+    const instance = await getContractInstance(contract, urls)
+    if (!instance)
+        return {}
+    return getNativeStorage(instance.storage(), keys)
+}
+
+
+module.exports = {getUpdateTx, getAccountSequence, getSubscriptionEvents, loadSubscriptions, loadSubscription, loadTransaction}

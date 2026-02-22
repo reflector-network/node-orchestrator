@@ -1,4 +1,4 @@
-const statisticsManager = require('../../domain/statistics-manager')
+const statisticsManager = require('../../domain/statistics/statistics-manager')
 const AuthMode = require('../auth-mode')
 const {registerRoute} = require('../route')
 
