@@ -196,7 +196,6 @@ function buildSubscriptionTimeline(updates, now, data) {
 
 class StatisticsData {
     constructor(account, type) {
-        this.lastLedger = 0
         this.updates = {}
         this.account = account
         this.type = type
@@ -207,11 +206,6 @@ class StatisticsData {
      * @type {string}
      */
     account
-
-    /**
-     * @type {bigint}
-     */
-    lastLedger
 
     /**
      * Map of transaction hash by transaction timestamp
@@ -236,7 +230,7 @@ class StatisticsData {
 class TxStatisticsManager {
 
     /**
-     * @type {Map<string, StatisticsData>}
+     * @type {{lastLedger: number, clusterStatistics: Map<string, StatisticsData>}}
      */
     __contractsState = null
 
@@ -259,7 +253,7 @@ class TxStatisticsManager {
         if (!this.__contractsState)
             return statistics
         for (const contract of contracts) {
-            const state = this.__contractsState.get(contract.contractId)
+            const state = this.__contractsState.clusterStatistics.get(contract.contractId)
             if (!state) {
                 logger.warn(`Contract ${contract.contractId} is not part of the current config. Skipping.`)
                 continue
@@ -286,8 +280,8 @@ class TxStatisticsManager {
         const doc = await StatisticsModel.findOne().exec()
         if (doc) {
             const normalizedData = doc.toPlainObject()
-            for (const [contractId, stats] of Object.entries(normalizedData.data)) {
-                const contractState = this.__contractsState.get(contractId)
+            for (const [contractId, stats] of Object.entries(normalizedData.data.clusterStatistics)) {
+                const contractState = this.__contractsState.clusterStatistics.get(contractId)
                 if (!contractState) {
                     logger.trace(`Loading statistics from db. ${contractId} is not part of the current config. Skipping.`)
                     continue
@@ -295,8 +289,8 @@ class TxStatisticsManager {
                 contractState.updates = stats.updates
                 contractState.entries = stats.entries
                 contractState.notifications = stats.notifications || []
-                contractState.lastLedger = stats.lastLedger
             }
+            this.__contractsState.lastLedger = normalizedData.data.lastLedger
         }
     }
 
@@ -308,19 +302,21 @@ class TxStatisticsManager {
          * @param {{contractId: string, admin: string, type: string}} contractData
          */
         const ensureContractSetup = (contractData) => {
-            if (!this.__contractsState.has(contractData.contractId)) {
-                this.__contractsState.set(contractData.contractId, new StatisticsData(contractData.admin, contractData.type))
-            } else if (this.__contractsState.get(contractData.contractId).account !== contractData.admin) {
-                this.__contractsState.get(contractData.contractId).account = contractData.admin //update account if it was changed
+            let contractState = this.__contractsState.clusterStatistics.get(contractData.contractId)
+            if (!contractState) {
+                contractState = new StatisticsData(contractData.admin, contractData.type)
+                this.__contractsState.clusterStatistics.set(contractData.contractId, contractState)
+            } else if (contractState.account !== contractData.admin) {
+                contractState.account = contractData.admin //update account if it was changed
             }
         }
         const isInitialized = this.__contractsState === null
-            ? !(this.__contractsState = new Map())
+            ? !(this.__contractsState = {lastLedger: 0, clusterStatistics: new Map()})
             : true
         for (const contract of config.contracts.values())
             ensureContractSetup(contract)
         //system account
-        ensureContractSetup({contractId: null, admin: config.systemAccount, type: 'system'})
+        ensureContractSetup({contractId: 'system', admin: config.systemAccount, type: 'system'})
         if (isInitialized)
             return
         //load persisted statistics
@@ -344,7 +340,7 @@ class TxStatisticsManager {
                         requests.set(contractId,
                             getContractInstanceEntries(contractId, urls, [...Object.keys(parser.entries)])
                                 .then(entries => {
-                                    const state = this.__contractsState.get(contractId)
+                                    const state = this.__contractsState.clusterStatistics.get(contractId)
                                     if (!state)
                                         return
                                     let hasChanges = false
@@ -375,16 +371,16 @@ class TxStatisticsManager {
      */
     async __updateTransactions(config, urls) {
         try {
-            const txs = await getLastTransactions(
+            const {txs, lastLedger} = await getLastTransactions(
                 urls,
-                Math.max(...[...this.__contractsState.values()].map(s => s.lastLedger))
+                this.__contractsState.lastLedger
             )
-            let hasChanges = false
+            logger.debug(`Fetched ${txs.length} transactions from horizon.`)
             for (const tx of txs) {
                 try {
-                    if (tx.inner_transaction)
-                        logger.trace(`Inner transaction ${tx.hash}.`)
-                        //continue //skip inner transactions, they will be processed with their parent transaction
+                    if (tx.inner_transaction) {
+                        continue //skip inner transactions, they will be processed with their parent transaction
+                    }
                     const isHostFnTx = xdr.TransactionResult.fromXDR(tx.result_xdr, 'base64').result().value().some(r => r.value().switch().name === 'invokeHostFunction')
                     if (isHostFnTx) {
                         const envelope = xdr.TransactionEnvelope.fromXDR(tx.envelope_xdr, 'base64')
@@ -396,30 +392,27 @@ class TxStatisticsManager {
                             const fnName = hostFunction.value().functionName().toString()
                             const args = [...hostFunction.value().args()].map(v => scValToNative(v))
                             const contractId = Address.contract(hostFunction.value().contractAddress().contractId()).toString()
-                            const state = this.__contractsState.get(contractId)
+                            const state = this.__contractsState.clusterStatistics.get(contractId)
                             if (!state)
                                 continue
                             const parser = getParser(state.type)?.fns?.[fnName]
                             if (!parser)
                                 continue
-                                //normalize data
-                            if (parser({
+                            //normalize data
+                            parser({
                                 source: {fn: fnName, args, txHash: tx.hash},
                                 account: tx.source_account,
                                 timestamp: BigInt(new Date(tx.created_at).getTime()),
                                 ledger: tx.ledger_attr,
                                 state
-                            }))
-                                hasChanges = true
-                            if (state.lastLedger < tx.ledger_attr)
-                                state.lastLedger = tx.ledger_attr
+                            })
                         }
                     }
                 } catch (err) {
                     logger.error({err, msg: `Error processing transaction ${tx.hash}`})
                 }
             }
-            return hasChanges
+            this.__contractsState.lastLedger = lastLedger
         } catch (error) {
             logger.error(error)
             logger.error(`Error updating transactions: ${error.message}`)
@@ -437,23 +430,24 @@ class TxStatisticsManager {
 
             const {urls, horizonUrls} = container.appConfig.getNetworkConfig(config.network)
 
-            const res = await Promise.all([this.__updateEntries(config, urls), this.__updateTransactions(config, horizonUrls)])
-            const hasChanges = res.some(r => r)
+            await Promise.all([this.__updateEntries(config, urls), this.__updateTransactions(config, horizonUrls)])
 
-            if (hasChanges) {
-                const rawData = mapToPlainObject(this.__contractsState)
-                //persist statistics
-                StatisticsModel.findOneAndUpdate({}, {
-                    data: rawData
-                }, {upsert: true}).exec().catch(err => {
-                    logger.error(`Error saving contract statistics: ${err.message}`)
-                })
+            const rawData = {
+                lastLedger: this.__contractsState.lastLedger,
+                clusterStatistics: mapToPlainObject(this.__contractsState.clusterStatistics)
             }
+            //persist statistics
+            StatisticsModel.findOneAndUpdate({}, {
+                data: rawData
+            }, {upsert: true}).exec().catch(err => {
+                logger.error(`Error saving contract statistics: ${err.message}`)
+            })
             logger.debug(`Transactions worker completed.`)
+            logger.trace(`Current statistics state: ${Math.max(...Object.values(rawData.clusterStatistics).map(o => Object.keys(o.updates).length))}. Last ledger: ${rawData.lastLedger}`)
         } catch (error) {
             logger.error(`Error getting transactions: ${error.message}`)
         } finally {
-            setTimeout(() => this.__transactionsWorker(), 1000 * 6) //run every 60 seconds
+            setTimeout(() => this.__transactionsWorker(), 1000 * 10) //run every 10 seconds
         }
     }
 }

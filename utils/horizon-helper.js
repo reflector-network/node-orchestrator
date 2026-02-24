@@ -89,7 +89,7 @@ async function getLastTransactions(urls, lastLedger = 0) {
 
     /**
      * @param {Horizon.Server} server
-     * @returns {Promise<any[]>}
+     * @returns {Promise<{txs: any[], lastLedger: number}>}
      */
     const transactionsRequestFn = async (server) => {
         const maxTotalTxs = 10_000
@@ -130,7 +130,7 @@ async function getLastTransactions(urls, lastLedger = 0) {
             }
             lastLedger++
         }
-        return txs
+        return {txs, lastLedger}
     }
 
     try {
