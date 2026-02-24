@@ -383,7 +383,8 @@ class TxStatisticsManager {
             for (const tx of txs) {
                 try {
                     if (tx.inner_transaction)
-                        continue //skip inner transactions, they will be processed with their parent transaction
+                        logger.trace(`Inner transaction ${tx.hash}.`)
+                        //continue //skip inner transactions, they will be processed with their parent transaction
                     const isHostFnTx = xdr.TransactionResult.fromXDR(tx.result_xdr, 'base64').result().value().some(r => r.value().switch().name === 'invokeHostFunction')
                     if (isHostFnTx) {
                         const envelope = xdr.TransactionEnvelope.fromXDR(tx.envelope_xdr, 'base64')

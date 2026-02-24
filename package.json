@@ -1,6 +1,6 @@
 {
   "name": "@reflector/node-orchestrator",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Orchestrator service for Reflector cluster nodes",
   "author": "team@stellar.expert",
   "license": "MIT",
