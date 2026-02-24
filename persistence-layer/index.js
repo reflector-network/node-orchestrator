@@ -29,6 +29,8 @@ async function connect(connectionString) {
 }
 
 async function dropDatabase() {
+    if (!__connection)
+        return
     await __connection.connection.db.dropDatabase()
 }
 

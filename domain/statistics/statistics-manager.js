@@ -1,10 +1,11 @@
 /*eslint-disable guard-for-in */
 const {hasMajority} = require('@reflector/reflector-shared')
-const logger = require('../logger')
-const MessageTypes = require('../server/ws/handlers/message-types')
-const MetricsModel = require('../persistence-layer/models/metrics-model')
-const container = require('./container')
-const ConfigStatus = require('./config-status')
+const logger = require('../../logger')
+const MessageTypes = require('../../server/ws/handlers/message-types')
+const MetricsModel = require('../../persistence-layer/models/metrics-model')
+const container = require('../container')
+const ConfigStatus = require('../config-status')
+const TxStatisticsManager = require('./tx-statistics-manager')
 
 const issueTypes = {
     CONNECTION_ISSUES: 'CONNECTION_ISSUES',
@@ -51,13 +52,13 @@ class NodeIssueItem {
     }
 }
 
-const statistics = []
+let statistics = {}
 
 const gatewaysMetrics = {}
 
 const issues = {nodeIssues: {}, clusterIssues: {}, oracleIssues: {}}
 
-async function getStatistics() {
+async function requestStatistics() {
     try {
         const nodes = container.configManager.allNodePubkeys()
         const requests = []
@@ -85,10 +86,9 @@ async function getStatistics() {
                 gatewaysMetrics[response.value.pubkey] = response.value.statistics.gatewaysMetrics
                 //remove gateways metrics from statistics data, because the statistics data is available for all users
                 response.value.statistics.gatewaysMetrics = undefined
-            }
-            if (response.value.statistics) {
+
                 for (const oracleId in response.value.statistics.oracleStatistics) {
-                    response.value.statistics.oracleStatistics[oracleId].oracleId = oracleId
+                    response.value.statistics.oracleStatistics[oracleId].oracleId = oracleId //add oracleId to oracle statistics for legacy support
                 }
             }
             nodeStatistics[response.value.pubkey] = response.value.statistics
@@ -100,18 +100,22 @@ async function getStatistics() {
 
         const issuesData = collectIssues(nodeStatistics, configData)
 
-        addStatistics({
+
+        statistics = {
             nodeStatistics,
             currentTimestamp: Date.now(),
             currentConfigHash: configData?.currentConfig?.hash,
-            pendingConfigHash: configData?.pendingConfig?.hash
-        })
+            pendingConfigHash: configData?.pendingConfig?.hash,
+            contractsInfo: Object.fromEntries(
+                Object.entries(configData?.currentConfig?.config.config.contracts || {})
+                    .map(([contractId, contract]) => [contractId, {type: contract.type, timeframe: contract.timeframe}]))
+        }
         addIssues(issuesData, container.configManager.allNodePubkeys().length)
     } catch (e) {
         logger.error(`Error requesting statistics: ${e.message}`)
         return null
     } finally {
-        setTimeout(getStatistics, 60000)
+        setTimeout(requestStatistics, 60000)
     }
 }
 
@@ -200,13 +204,6 @@ function collectIssues(nodeStatistics, configData) {
         clusterIssues[issueTypes.CLUSTER_UPDATE_ISSUE] = new NodeIssueItem(issueTypes.CLUSTER_UPDATE_ISSUE, 'Cluster update issue.', now)
     }
     return {nodeIssues, clusterIssues, oracleIssues}
-}
-
-function addStatistics(statisticsData) {
-    //add statistics to the beginning of the array
-    statistics.unshift(statisticsData)
-    if (statistics.length > 100) //keep only 100 last statistics
-        statistics.pop()
 }
 
 function addIssues(newIssuesData, totalNodesCount) {
@@ -309,12 +306,14 @@ function issuesToHtml(issues) {
 class StatisticsManager {
 
     constructor() {
-        setTimeout(getStatistics, 10000)
+        setTimeout(requestStatistics, 10000)
         cleanMetrics()
+        this.txStatisticsManager = new TxStatisticsManager()
     }
 
     getStatistics() {
-        return statistics
+        const oracles = Object.values(container.configManager.getCurrentConfigs().currentConfig?.config.config.contracts || {}).filter(contract => ['oracle', 'oracle_beam', 'subscription'].includes(contract.type))
+        return {...statistics, timelines: this.txStatisticsManager.getTimelines(oracles)}
     }
 
     /**

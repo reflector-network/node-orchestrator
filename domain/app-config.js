@@ -33,6 +33,7 @@ class AppConfig {
         this.__assignNetworks(rawConfig.networks)
         this.__assignEmailConfig(rawConfig.emailSettings)
         this.__assignMonitoringKey(rawConfig.monitoringKey)
+        this.__assignLokiUrl(rawConfig.lokiUrl)
     }
 
     /**
@@ -70,6 +71,11 @@ class AppConfig {
      */
     monitoringKey = null
 
+    /**
+     * @type {string}
+     */
+    lokiUrl = null
+
     __assignDefaultNodes(defaultNodes) {
         if (!defaultNodes)
             throw new Error('defaultNodes is undefined')
@@ -98,13 +104,15 @@ class AppConfig {
                 throw new Error(`${networkName}.url is undefined`)
             if (!network.passphrase)
                 throw new Error(`${networkName}.passphrase is undefined`)
-            this.networks.set(networkName, {urls: network.urls, passphrase: network.passphrase})
+            if (!network.horizonUrls)
+                throw new Error(`${networkName}.horizonUrls is undefined`)
+            this.networks.set(networkName, {urls: network.urls, passphrase: network.passphrase, horizonUrls: network.horizonUrls})
         }
     }
 
     /**
      * @param {string} network
-     * @returns {{urls: string[], passphrase: string}}
+     * @returns {{urls: string[], passphrase: string, horizonUrls: string[]}}
      */
     getNetworkConfig(network) {
         if (!network)
@@ -120,6 +128,10 @@ class AppConfig {
 
     __assignMonitoringKey(monitoringKey) {
         this.monitoringKey = monitoringKey
+    }
+
+    __assignLokiUrl(lokiUrl) {
+        this.lokiUrl = lokiUrl
     }
 }
 

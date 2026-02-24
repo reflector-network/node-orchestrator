@@ -16,12 +16,13 @@ const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config
 const MessageTypes = require('../server/ws/handlers/message-types')
 const ChannelTypes = require('../server/ws/channel-types')
 const logger = require('../logger')
+const {getUpdateTx, getAccountSequence} = require('../utils/rpc-helper')
 const ConfigStatus = require('./config-status')
 const {computeUpdateStatus} = require('./utils')
 const notificationProvider = require('./notification-provider')
-const {getUpdateTxHash, getUpdateTx, getAccountSequence} = require('./rpc-helper')
 const container = require('./container')
 const {setManagers} = require('./subscription-data-provider')
+const {getUpdateTxHash} = require('./blockchain-data-provider')
 
 /**
  * @typedef {import('./types').ConfigEnvelopeDto} ConfigEnvelopeDto
@@ -290,6 +291,9 @@ class ConfigManager {
     getConfigMessage() {
         return getConfigMessage()
     }
+    get currentConfig() {
+        return __currentConfig?.envelope?.config
+    }
 }
 
 function getConfigMessage() {
@@ -476,7 +480,7 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
     //Transaction hash not found, generate and poll
     const accountSequence = await getAccountSequence(__currentConfig.envelope.config)
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
         const {hash, maxTime, hasMoreTxns} = await getUpdateTxHash(
             __currentConfig.envelope.config,
             __pendingConfig.envelope.config,

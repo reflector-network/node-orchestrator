@@ -9,6 +9,10 @@ const ConnectionManager = require('./domain/connections-manager')
 const NodeSettingsManager = require('./domain/node-settings-manager')
 const EmailProvider = require('./domain/email-provider')
 
+BigInt.prototype.toJSON = function () {
+    return this.toString()
+}
+
 try {
     if (!fs.existsSync('./home/app.config.json'))
         throw new Error('app.config.json not found')

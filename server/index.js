@@ -4,6 +4,7 @@ const bodyParser = require('body-parser')
 const {WebSocketServer} = require('ws')
 const {ValidationError} = require('@reflector/reflector-shared')
 const {StrKey} = require('@stellar/stellar-sdk')
+const {createProxyMiddleware} = require('http-proxy-middleware')
 const logger = require('../logger')
 const container = require('../domain/container')
 const MessageTypes = require('./ws/handlers/message-types')
@@ -45,6 +46,15 @@ class Server {
         logRoutes(this.app)
         settingsRoutes(this.app)
         subscriptionRoutes(this.app)
+
+        if (container.appConfig.lokiUrl) {
+            const proxyMiddleware = createProxyMiddleware({
+                target: container.appConfig.lokiUrl,
+                changeOrigin: true
+            })
+
+            this.app.use('/loki-proxy', proxyMiddleware)
+        }
 
         const wss = new WebSocketServer({noServer: true})
 
