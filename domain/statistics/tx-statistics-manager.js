@@ -250,10 +250,10 @@ class TxStatisticsManager {
 
     /**
      * @param {Array<{contractId: string, type: string, timeframe: number}>} contracts
-     * @param {any} data - any additional data that might be needed to build timelines
+     * @param {any} extraData - any additional data that might be needed to build timelines
      * @returns {Object<string, {type: string, updates: Object<string, any>}>}
      */
-    getTimelines(contracts, data) {
+    getTimelines(contracts, extraData) {
         const now = Date.now()
         const statistics = {}
         if (!this.__contractsState)
@@ -271,7 +271,7 @@ class TxStatisticsManager {
                     data = buildOracleTimeline(state.updates, state.entries.expiration, now, contract.timeframe, 300)
                     break
                 case "subscription":
-                    data = buildSubscriptionTimeline(state.updates, now, data)
+                    data = buildSubscriptionTimeline(state.updates, now, extraData)
                     break
                 default:
                     logger.warn(`Unknown contract type ${state.type} for contract ${contract.contractId}. Skipping transaction data.`)
@@ -382,6 +382,8 @@ class TxStatisticsManager {
             let hasChanges = false
             for (const tx of txs) {
                 try {
+                    if (tx.inner_transaction)
+                        continue //skip inner transactions, they will be processed with their parent transaction
                     const isHostFnTx = xdr.TransactionResult.fromXDR(tx.result_xdr, 'base64').result().value().some(r => r.value().switch().name === 'invokeHostFunction')
                     if (isHostFnTx) {
                         const envelope = xdr.TransactionEnvelope.fromXDR(tx.envelope_xdr, 'base64')
