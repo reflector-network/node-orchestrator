@@ -107,15 +107,17 @@ async function getLastTransactions(urls, lastLedger = 0) {
                     if (err?.response?.status === 404) {
                         logger.trace({err, msg: `Ledger ${lastLedger} not found, assuming max ledger reached`})
                         maxLedgerReached = true
-                        return {records: []}
+                        return null
                     }
                     throw err
                 })
 
-            let hasMore = true
             //loop until we have enough transactions or no more transactions are available
-            while (hasMore) {
+            while (txsRequest) {
                 const transactions = await txsRequest()
+                if (!transactions) {
+                    break
+                }
                 for (const tx of transactions.records) {
                     txs.push(tx)
                 }
@@ -123,12 +125,13 @@ async function getLastTransactions(urls, lastLedger = 0) {
                     transactions.records.length === 0
                 || transactions.records.length < limit
                 ) {
-                    hasMore = false
+                    txsRequest = null
                 } else {
                     txsRequest = transactions.next
                 }
             }
-            lastLedger++
+            if (!maxLedgerReached)
+                lastLedger++
         }
         return {txs, lastLedger}
     }
