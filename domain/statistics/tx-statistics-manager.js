@@ -2,7 +2,7 @@ const {scValToNative, xdr, Address} = require('@stellar/stellar-sdk')
 const {getContractInstanceEntries, mapToPlainObject, normalizeTimestamp} = require('@reflector/reflector-shared')
 const logger = require('../../logger')
 const container = require('../container')
-const {getLastTransactionsForAccount, getLastTransactions} = require('../../utils/horizon-helper')
+const {getLastTransactions} = require('../../utils/horizon-helper')
 const StatisticsModel = require('../../persistence-layer/models/statistics')
 
 /**
@@ -72,6 +72,15 @@ function getParser(type) {
             return {
                 fns: {"set_price": (context) => {
                     context.state.updates[context.source.args[1]] = context.source.txHash
+                    //remove old updates if we have more than maxItemsToStore
+                    const timestamps = Object.keys(context.state.updates).map(ts => BigInt(ts))
+                    if (timestamps.length > maxItemsToStore) {
+                        const sortedTimestamps = timestamps.sort((a, b) => a - b > 0)
+                        while (sortedTimestamps.length > maxItemsToStore) {
+                            delete context.state.updates[sortedTimestamps[0]]
+                            sortedTimestamps.shift()
+                        }
+                    }
                     return true
                 }},
                 entries: {"expiration": (context) => { //assetTtls is array of expiration timestamps
@@ -83,22 +92,13 @@ function getParser(type) {
 
                     //max TTL or 0 if there are no active assets yet
                     const maxTtl = assetTtls.length > 0
-                        ? assetTtls.reduce((m, e) => e > m ? e : m)
+                        ? BigInt(assetTtls.reduce((m, e) => e > m ? e : m))
                         : 0n
 
                     //ensure we have the expiration array initialized
-                    state.entries.expiration ??= []
-                    const expiration = state.entries.expiration
+                    state.entries.expiration ??= [[0n, 0n]]
 
-                    //if max TTL is zero or in the past
-                    if (maxTtl === 0n || maxTtl < timestamp) {
-                        if (expiration.length > 0)
-                            return //already have an inactive range, no need to add another one
-                        expiration.push([0n, 0n])
-                        return true
-                    }
-
-                    const lastEntry = expiration[expiration.length - 1]
+                    const lastEntry = state.entries.expiration[state.entries.expiration.length - 1]
 
                     //no changes
                     if (lastEntry[1] === maxTtl)
@@ -112,7 +112,7 @@ function getParser(type) {
 
                     //start a new range if current maxTtl is ahead of the current timestamp
                     if (maxTtl > timestamp) {
-                        expiration.push([timestamp, maxTtl])
+                        state.entries.expiration.push([timestamp, maxTtl])
                         return true
                     }
                 }}

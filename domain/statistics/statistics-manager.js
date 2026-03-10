@@ -312,7 +312,8 @@ class StatisticsManager {
     }
 
     getStatistics() {
-        const oracles = Object.values(container.configManager.getCurrentConfigs().currentConfig?.config.config.contracts || {}).filter(contract => ['oracle', 'oracle_beam', 'subscription'].includes(contract.type))
+        const contracts = [...(container.configManager.currentConfig?.contracts.values() || [])]
+        const oracles = contracts.filter(contract => ['oracle', 'oracle_beam', 'subscription'].includes(contract.type))
         return {...statistics, timelines: this.txStatisticsManager.getTimelines(oracles)}
     }
 
