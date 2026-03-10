@@ -140,7 +140,7 @@ async function getLastTransactions(urls, lastLedger = 0) {
         return await makeServerRequest(urls, getServer, transactionsRequestFn)
     } catch (err) {
         logger.error({err, msg: `Error fetching transactions`})
-        return []
+        return {txs: [], lastLedger}
     }
 }
 
