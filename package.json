@@ -1,6 +1,6 @@
 {
   "name": "@reflector/node-orchestrator",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "description": "Orchestrator service for Reflector cluster nodes",
   "author": "team@stellar.expert",
   "license": "MIT",
@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@reflector/oracle-client": "github:reflector-network/oracle-client#v7.0.0",
-    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.0.0",
+    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.1.0-rc1",
     "@stellar-expert/tx-meta-effects-parser": "^8.3.3",
     "@stellar/stellar-sdk": "14.4.3",
     "axios": "1.11.0",
