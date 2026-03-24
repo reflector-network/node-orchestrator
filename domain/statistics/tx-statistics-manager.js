@@ -137,7 +137,7 @@ const STATUS = {
 
 const gracePeriod = BigInt(60 * 1000)
 
-function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, totalSlots = maxItemsToStore) {
+function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartbeat, totalSlots = maxItemsToStore) {
     const slotsToProcess = Math.min(totalSlots, maxItemsToStore)
     const lastSlotTs = BigInt(normalizeTimestamp(currentTime, timeframe))
     const nowTs = BigInt(Date.now())
@@ -160,15 +160,15 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, totalS
             continue
         }
 
-        if (!activeTtls?.length) { //v1 oracle, all timestamps are required
-            timeline[ts] = STATUS.MISSING
-            continue
+        let isRequired = false
+        if (heartbeat && BigInt(normalizeTimestamp(ts, heartbeat)) === ts) { //heartbeat timestamp
+            isRequired = true
         }
 
         //if there are no active ranges, all timestamps are not required
         const isWithinActiveRange = activeTtls.some(([start, end]) =>
             ts >= BigInt(start) && ts <= BigInt(end)
-        )
+        ) && isRequired
 
         timeline[ts] = isWithinActiveRange ? STATUS.MISSING : STATUS.INACTIVE
     }
@@ -262,7 +262,13 @@ class TxStatisticsManager {
             switch (state.type) {
                 case "oracle":
                 case "oracle_beam":
-                    data = buildOracleTimeline(state.updates, state.entries.expiration, now, contract.timeframe, 300)
+                    data = buildOracleTimeline(
+                        state.updates,
+                        state.entries.expiration,
+                        now,
+                        contract.timeframe,
+                        extraData.priceHeartbeat,
+                        300)
                     break
                 case "subscription":
                     data = buildSubscriptionTimeline(state.updates, now, extraData)
