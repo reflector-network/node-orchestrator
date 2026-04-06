@@ -631,6 +631,11 @@ function cleanupConfig(config) {
     for (const [, node] of Object.entries(config.config.nodes)) {
         delete node.url
     }
+    for (const [, contract] of Object.entries(config.config.contracts)) {
+        if (contract.period)
+            contract.period = contract.timeframe ? contract.timeframe * 256 : undefined
+    }
+
     if (config.config.clusterSecret)
         delete config.config.clusterSecret
     return config

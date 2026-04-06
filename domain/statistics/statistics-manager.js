@@ -1,5 +1,5 @@
 /*eslint-disable guard-for-in */
-const {hasMajority} = require('@reflector/reflector-shared')
+const {hasMajority, ContractTypes} = require('@reflector/reflector-shared')
 const logger = require('../../logger')
 const MessageTypes = require('../../server/ws/handlers/message-types')
 const MetricsModel = require('../../persistence-layer/models/metrics-model')
@@ -191,7 +191,7 @@ function collectIssues(nodeStatistics, configData) {
 
     for (const [oracleId, lastOracleTimestamp] of Object.entries(lastOracleTimestamps)) {
         const contractData = configData.currentConfig?.config?.config.contracts[oracleId]
-        if (!contractData)
+        if (!contractData || contractData.type === ContractTypes.ORACLE_BEAM) //we can't handle beam oracles this way
             continue
         if (now - lastOracleTimestamp > (contractData.timeframe + contractData.timeframe * .2) * 2) { //if last oracle timestamp is older than 2 timeframes + 20% threshold
             logger.debug(`Price update issue with oracle ${oracleId}, lastOracleTimestamp: ${lastOracleTimestamp}.`)
@@ -312,9 +312,17 @@ class StatisticsManager {
     }
 
     getStatistics() {
-        const contracts = [...(container.configManager.currentConfig?.contracts.values() || [])]
+        const currentConfig = container.configManager.currentConfig
+        const contracts = [...(currentConfig?.contracts.values() || [])]
         const oracles = contracts.filter(contract => ['oracle', 'oracle_beam', 'subscription'].includes(contract.type))
-        return {...statistics, timelines: this.txStatisticsManager.getTimelines(oracles)}
+        return {
+            ...statistics,
+            timelines: this.txStatisticsManager.getTimelines(
+                oracles,
+                {
+                    priceHeartbeat: currentConfig?.priceHeartbeat || 2 * 60 * 60 * 1000
+                }
+            )}
     }
 
     /**

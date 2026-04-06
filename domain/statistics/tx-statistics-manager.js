@@ -135,18 +135,18 @@ const STATUS = {
     INACTIVE: 1
 }
 
-const gracePeriod = BigInt(60 * 1000)
+const gracePeriod = 60 * 1000
 
-function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, totalSlots = maxItemsToStore) {
+function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartbeat, totalSlots = maxItemsToStore) {
     const slotsToProcess = Math.min(totalSlots, maxItemsToStore)
-    const lastSlotTs = BigInt(normalizeTimestamp(currentTime, timeframe))
-    const nowTs = BigInt(Date.now())
+    const lastSlotTs = normalizeTimestamp(currentTime, timeframe)
+    const nowTs = Date.now()
 
     //generate all expected timestamps
     const timeline = {}
 
     for (let i = 0; i < slotsToProcess; i++) {
-        const ts = lastSlotTs - (BigInt(i) * BigInt(timeframe))
+        const ts = lastSlotTs - (i * timeframe)
 
         //hash is present for this timestamp
         if (updates[ts] !== undefined) {
@@ -160,9 +160,9 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, totalS
             continue
         }
 
-        if (!activeTtls?.length) { //v1 oracle, all timestamps are required
-            timeline[ts] = STATUS.MISSING
-            continue
+        let isRequired = false
+        if (heartbeat && normalizeTimestamp(ts, heartbeat) === ts) { //heartbeat timestamp
+            isRequired = true
         }
 
         //if there are no active ranges, all timestamps are not required
@@ -179,7 +179,7 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, totalS
 function buildSubscriptionTimeline(updates, now, data) {
     const timeline = {}
     for (const triggerTimestamps of data) {
-        const ts = BigInt(triggerTimestamps)
+        const ts = Number(triggerTimestamps)
         if (updates[ts] !== undefined) {
             timeline[ts] = updates[ts]
             continue
@@ -262,7 +262,13 @@ class TxStatisticsManager {
             switch (state.type) {
                 case "oracle":
                 case "oracle_beam":
-                    data = buildOracleTimeline(state.updates, state.entries.expiration, now, contract.timeframe, 300)
+                    data = buildOracleTimeline(
+                        state.updates,
+                        state.entries.expiration,
+                        now,
+                        contract.timeframe,
+                        extraData.priceHeartbeat,
+                        300)
                     break
                 case "subscription":
                     data = buildSubscriptionTimeline(state.updates, now, extraData)
