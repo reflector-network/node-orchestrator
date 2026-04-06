@@ -168,7 +168,7 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartb
         //if there are no active ranges, all timestamps are not required
         const isWithinActiveRange = (activeTtls || []).some(([start, end]) =>
             ts >= BigInt(start) && ts <= BigInt(end)
-        )
+        ) && isRequired
 
         timeline[ts] = isWithinActiveRange ? STATUS.MISSING : STATUS.INACTIVE
     }
