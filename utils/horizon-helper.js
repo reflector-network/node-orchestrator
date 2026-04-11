@@ -105,7 +105,7 @@ async function getLastTransactions(urls, lastLedger = 0) {
                 .call()
                 .catch(err => {
                     if (err?.response?.status === 404) {
-                        logger.trace({err, msg: `Ledger ${lastLedger} not found, assuming max ledger reached`})
+                        //logger.trace({err, msg: `Ledger ${lastLedger} not found, assuming max ledger reached`})
                         maxLedgerReached = true
                         return null
                     }
