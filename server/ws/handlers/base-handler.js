@@ -11,7 +11,7 @@ class BaseHandler {
      * @type {number}
      * @readonly
      */
-    allowedChannelTypes = 0
+    allowedChannelTypes = []
 
     /**
      * @type {boolean}

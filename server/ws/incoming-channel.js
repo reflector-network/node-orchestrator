@@ -1,6 +1,7 @@
 const {v4: uuidv4} = require('uuid')
 const IncomingChannelBase = require('./incoming-channel-base')
 const ChannelTypes = require('./channel-types')
+const constants = require('./contstants')
 
 /**
  * Handles the ws channel and its events. Restarts on failure.
@@ -20,7 +21,7 @@ class IncomingChannel extends IncomingChannelBase {
         this.isNode = isNode
     }
 
-    authPayload = uuidv4()
+    authPayload = constants.payloadPrefix + uuidv4()
 
     type = ChannelTypes.INCOMING
 }

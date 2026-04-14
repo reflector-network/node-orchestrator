@@ -1,9 +1,12 @@
 const {Keypair} = require('@stellar/stellar-sdk')
+const ChannelTypes = require('../channel-types')
 const BaseHandler = require('./base-handler')
 
 class HandshakeResponseHandler extends BaseHandler {
 
     allowAnonymous = true
+
+    allowedChannelTypes = [ChannelTypes.OUTGOING, ChannelTypes.INCOMING]
 
     /**
      * @param {ChannelBase} channel - channel
