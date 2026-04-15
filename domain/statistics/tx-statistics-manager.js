@@ -160,9 +160,9 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartb
             continue
         }
 
-        let isRequired = false
-        if (heartbeat && normalizeTimestamp(ts, heartbeat) === ts) { //heartbeat timestamp
-            isRequired = true
+        let isRequired = true
+        if (heartbeat && normalizeTimestamp(ts, heartbeat) !== ts) { //heartbeat timestamp
+            isRequired = false
         }
 
         //if there are no active ranges, all timestamps are not required
@@ -267,7 +267,7 @@ class TxStatisticsManager {
                         state.entries.expiration,
                         now,
                         contract.timeframe,
-                        extraData.priceHeartbeat,
+                        state.type === 'oracle_beam' ? extraData.priceHeartbeat : undefined,
                         300)
                     break
                 case "subscription":
