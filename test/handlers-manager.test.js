@@ -1,3 +1,4 @@
+/*eslint-disable no-undef */
 const HandlersManager = require('../server/ws/handlers/handlers-manager')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const ChannelTypes = require('../server/ws/channel-types')
@@ -63,5 +64,14 @@ describe('HandlersManager', () => {
 
         expect(result).toBe('handled')
         expect(handler.handle).toHaveBeenCalledWith(channel, message)
+    })
+
+    test('HandshakeResponseHandler exposes only INCOMING channel type', () => {
+        const HandshakeResponseHandler = require('../server/ws/handlers/handshake-response-handler')
+        const ChannelTypes = require('../server/ws/channel-types')
+
+        const h = new HandshakeResponseHandler()
+        expect(h.allowedChannelTypes).toEqual([ChannelTypes.INCOMING])
+        expect(h.allowedChannelTypes).not.toContain(undefined)
     })
 })

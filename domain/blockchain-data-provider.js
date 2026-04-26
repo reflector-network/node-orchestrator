@@ -4,13 +4,26 @@ const logger = require('../logger')
 const {getTransactions} = require('../utils/horizon-helper')
 const container = require('./container')
 
-const baseUpdateFee = 10000000
+//These constants are a deliberate mirror of the submit schedule in
+//`reflector-node` (src/domain/runners/runner-base.js). The cluster's
+//ClusterRunner builds and submits the update tx with these exact fee
+//and maxTime values; the orchestrator must build with the same values
+//to derive a matching hash. If you change anything here, you MUST
+//change the node side in the same release.
+const baseUpdateFee = 10_000_000
+const FEE_MULTIPLIER = 8
+const firstAttemptTimeout = 30_000
+const retryAttemptTimeout = 15_000
+const maxSubmitAttempts = 3
 
-const txTimeout = 15000
-
+/**
+ * @param {number} syncTimestamp - sync timestamp in milliseconds
+ * @param {number} iteration - 1-based iteration (attempt 0 → iteration 1)
+ * @returns {number} - max time in seconds
+ */
 function __getMaxTime(syncTimestamp, iteration) {
-    const maxTime = syncTimestamp + (txTimeout * iteration)
-    return maxTime / 1000 //convert to seconds
+    const budgetMs = firstAttemptTimeout + retryAttemptTimeout * (iteration - 1)
+    return (syncTimestamp + budgetMs) / 1000
 }
 
 /**
@@ -25,7 +38,7 @@ function __getMaxTime(syncTimestamp, iteration) {
  */
 async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, syncTimestamp, iteration = 0) {
 
-    const fee = baseUpdateFee * Math.pow(4, iteration) //increase fee by 4 times on each iteration
+    const fee = baseUpdateFee * Math.pow(FEE_MULTIPLIER, iteration)
     const maxTime = __getMaxTime(syncTimestamp, iteration + 1)
 
     const {network, systemAccount} = currentConfig
@@ -82,5 +95,9 @@ async function getLastClusterTransactions() {
 
 module.exports = {
     getUpdateTxHash,
-    getLastClusterTransactions
+    getLastClusterTransactions,
+    maxSubmitAttempts,
+    baseUpdateFee,
+    FEE_MULTIPLIER,
+    __getMaxTime
 }

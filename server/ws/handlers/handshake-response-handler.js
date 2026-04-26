@@ -6,7 +6,7 @@ class HandshakeResponseHandler extends BaseHandler {
 
     allowAnonymous = true
 
-    allowedChannelTypes = [ChannelTypes.OUTGOING, ChannelTypes.INCOMING]
+    allowedChannelTypes = [ChannelTypes.INCOMING]
 
     /**
      * @param {ChannelBase} channel - channel
