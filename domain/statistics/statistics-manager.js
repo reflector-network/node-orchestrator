@@ -110,7 +110,8 @@ class StatisticsManager {
             timelines: container.txStatisticsManager.getTimelines(
                 oracles,
                 {priceHeartbeat: currentConfig?.priceHeartbeat || 2 * 60 * 60 * 1000}
-            )
+            ),
+            nodes: [...(currentConfig?.nodes?.entries() || [])].map(([pubkey, node]) => ({pubkey, domain: node.domain}))
         }
     }
 

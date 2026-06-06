@@ -158,7 +158,7 @@ const STATUS = {
 
 const gracePeriod = 60 * 1000
 
-function buildOracleTimeline(updates, signers, activeTtls, currentTime, timeframe, heartbeat, totalSlots = maxItemsToStore) {
+function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartbeat, totalSlots = maxItemsToStore) {
     const slotsToProcess = Math.min(totalSlots, maxItemsToStore)
     const lastSlotTs = normalizeTimestamp(currentTime, timeframe)
     const nowTs = Date.now()
@@ -168,8 +168,8 @@ function buildOracleTimeline(updates, signers, activeTtls, currentTime, timefram
     for (let i = 0; i < slotsToProcess; i++) {
         const ts = lastSlotTs - (i * timeframe)
 
-        if (updates[ts] !== undefined) {
-            timeline[ts] = {hash: updates[ts], signers: signers[ts] || []}
+        if (updates[ts]?.tx !== undefined) {
+            timeline[ts] = updates[ts]?.tx//{tx: updates[ts].tx, signers: updates[ts].signers || []}
             continue
         }
 
@@ -197,8 +197,8 @@ function buildSubscriptionTimeline(updates, now, data) {
     const timeline = {}
     for (const triggerTimestamps of data) {
         const ts = Number(triggerTimestamps)
-        if (updates[ts] !== undefined) {
-            timeline[ts] = updates[ts]
+        if (updates[ts]?.tx !== undefined) {
+            timeline[ts] = {tx: updates[ts].tx, signers: updates[ts].signers || []}
             continue
         }
 
@@ -239,8 +239,11 @@ class StatisticsData {
     }
 
     addUpdate(timestamp, update) {
-        this.__updates[timestamp] = update
-        this.__hashToUpdate[update.tx] = timestamp
+        let normalizedUpdate = update
+        if (!normalizedUpdate?.tx)
+            normalizedUpdate = {tx: normalizedUpdate}
+        this.__updates[timestamp] = normalizedUpdate
+        this.__hashToUpdate[normalizedUpdate.tx] = timestamp
         this.__pruneStateMaps()
     }
 
@@ -305,7 +308,6 @@ class TxStatisticsManager {
                 case "oracle_beam":
                     data = buildOracleTimeline(
                         state.updates,
-                        state.signers || {},
                         state.entries.expiration,
                         now,
                         contract.timeframe,
