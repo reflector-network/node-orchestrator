@@ -174,7 +174,7 @@ class NotificationsManager {
         }
     }
 
-    //Test helpers — keep public-but-prefixed so tests can introspect without
+    //test helpers - keep public-but-prefixed so tests can introspect without
     //exposing internals to production callers.
     _size() {
         return this.__items.size

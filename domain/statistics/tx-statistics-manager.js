@@ -49,7 +49,7 @@ function getParser(type) {
                         container.notificationsManager.report({
                             category: 'cluster',
                             type: 'DAO_BALLOT_CREATED',
-                            message: 'Ballot created: ' + (arg.title || '(no title)') + ' — ' + (arg.description || ''),
+                            message: 'Ballot created: ' + (arg.title || '(no title)') + ' - ' + (arg.description || ''),
                             recipient: {kind: 'monitoring'},
                             firstSeenAt: Number(context.timestamp),
                             dedupKey: 'dao:ballot:' + context.source.txHash
@@ -85,7 +85,7 @@ function getParser(type) {
                             for (let bit = 0; bit < 8; bit++) {
                                 if (maskByte & (1 << bit)) {
                                     const assetIndex = byte * 8 + bit
-                                    //Fill gaps with zeros
+                                    //fill gaps with zeros
                                     while (prices.length < assetIndex)
                                         prices.push(0n)
                                     prices.push(update.prices[priceIndex++])
