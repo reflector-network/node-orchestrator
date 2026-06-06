@@ -6,6 +6,9 @@
  * @typedef {import('./app-config')} AppConfig
  * @typedef {import('./email-provider')} EmailProvider
  * @typedef {import('./node-settings-manager')} NodeSettingsManager
+ * @typedef {import('./notifications/notifications-manager')} NotificationsManager
+ * @typedef {import('./statistics/statistics-manager')} StatisticsManager
+ * @typedef {import('./statistics/tx-statistics-manager')} TxStatisticsManager
  */
 
 const packageInfo = require('../package.json')
@@ -51,6 +54,21 @@ class Container {
      * @type {{shutdown: function(): void}}
      */
     app
+
+    /**
+     * @type {NotificationsManager}
+     */
+    notificationsManager
+
+    /**
+     * @type {StatisticsManager}
+     */
+    statisticsManager
+
+    /**
+     * @type {TxStatisticsManager}
+     */
+    txStatisticsManager
 
     /**
      * @type {string}

@@ -1,9 +1,10 @@
-const statisticsManager = require('../../domain/statistics/statistics-manager')
+const container = require('../../domain/container')
 const AuthMode = require('../auth-mode')
 const {registerRoute} = require('../route')
 
 
 function statisticsRoutes(app) {
+    const {statisticsManager} = container
     /**
      * @openapi
      * /statistics:
