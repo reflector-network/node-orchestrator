@@ -8,6 +8,9 @@ const Server = require('./server')
 const ConnectionManager = require('./domain/connections-manager')
 const NodeSettingsManager = require('./domain/node-settings-manager')
 const EmailProvider = require('./domain/email-provider')
+const NotificationManager = require('./domain/notifications/notifications-manager')
+const TxStatisticsManager = require('./domain/statistics/tx-statistics-manager')
+const StatisticsManager = require('./domain/statistics/statistics-manager')
 
 BigInt.prototype.toJSON = function () {
     return this.toString()
@@ -26,6 +29,9 @@ try {
     container.connectionManager = new ConnectionManager()
     container.nodeSettingsManager = new NodeSettingsManager()
     container.emailProvider = new EmailProvider(container.appConfig.emailSettings)
+    container.notificationsManager = new NotificationManager()
+    container.txStatisticsManager = new TxStatisticsManager()
+    container.statisticsManager = new StatisticsManager()
     container.server = new Server()
 
     require('./app')(container)

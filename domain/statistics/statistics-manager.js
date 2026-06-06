@@ -5,7 +5,6 @@ const MessageTypes = require('../../server/ws/handlers/message-types')
 const MetricsModel = require('../../persistence-layer/models/metrics-model')
 const container = require('../container')
 const ConfigStatus = require('../config-status')
-const TxStatisticsManager = require('./tx-statistics-manager')
 
 const issueTypes = {
     CONNECTION_ISSUES: 'CONNECTION_ISSUES',
@@ -18,131 +17,22 @@ const issueTypes = {
     NO_MAJORITY: 'NO_MAJORITY'
 }
 
-class NodeIssueItem {
+class IssueRecord {
     constructor(type, message, timestamp) {
         this.type = type
         this.message = message
         this.timestamp = timestamp
-        this.notificationTimestamp = 0
-    }
-
-    setNotificationSent() {
-        this.notificationTimestamp = Date.now()
-    }
-
-    shouldSend() {
-        const __hoursToMs = (hours) => 1000 * 60 * 60 * hours
-        //check if notification was sent recently
-        const __shouldSend = (repeatInterval) => Date.now() - this.notificationTimestamp > __hoursToMs(repeatInterval)
-        switch (this.type) {
-            case issueTypes.NODE_UNAVAILABLE:
-                return Date.now() - this.timestamp > __hoursToMs(1) && __shouldSend(6) //if node is unavailable for more than 1 hour
-            case issueTypes.NO_MAJORITY:
-            case issueTypes.WRONG_CONFIG:
-            case issueTypes.WRONG_PENDING_CONFIG:
-                return Date.now() - this.timestamp > __hoursToMs(.1) && __shouldSend(6) //if error persists for more than 6 minutes
-            case issueTypes.PRICE_UPDATE_ISSUE:
-                return __shouldSend(1)
-            case issueTypes.CLUSTER_UPDATE_ISSUE:
-                return __shouldSend(6)
-
-            default:
-                return __shouldSend(24)
-        }
     }
 }
 
-let statistics = {}
-
-const gatewaysMetrics = {}
-
-const issues = {nodeIssues: {}, clusterIssues: {}, oracleIssues: {}}
-
-async function requestStatistics() {
-    try {
-        const nodes = container.configManager.allNodePubkeys()
-        const requests = []
-        for (const pubkey of nodes) {
-            const channel = container.connectionManager.getNodeConnection(pubkey)
-            const request = async () => {
-                const result = {pubkey, statistics: null}
-                try {
-                    if (channel && channel.isReady) {
-                        const statisticsData = await channel.send({type: MessageTypes.STATISTICS_REQUEST})
-                        statisticsData.timeshift = Date.now() - statisticsData.currentTime
-                        result.statistics = statisticsData
-                    }
-                } catch (e) {
-                    logger.error(`Error requesting statistics from node ${pubkey}: ${e.message}`)
-                }
-                return result
-            }
-            requests.push(request())
-        }
-        const nodeStatistics = {}
-        const statisticsData = await Promise.allSettled(requests)
-        for (const response of statisticsData) {
-            if (response.value.statistics) {
-                gatewaysMetrics[response.value.pubkey] = response.value.statistics.gatewaysMetrics
-                //remove gateways metrics from statistics data, because the statistics data is available for all users
-                response.value.statistics.gatewaysMetrics = undefined
-
-                for (const oracleId in response.value.statistics.oracleStatistics) {
-                    response.value.statistics.oracleStatistics[oracleId].oracleId = oracleId //add oracleId to oracle statistics for legacy support
-                }
-            }
-            nodeStatistics[response.value.pubkey] = response.value.statistics
-        }
-
-        await saveMetrics()
-
-        const configData = container.configManager.getCurrentConfigs()
-
-        const issuesData = collectIssues(nodeStatistics, configData)
-
-
-        statistics = {
-            nodeStatistics,
-            currentTimestamp: Date.now(),
-            currentConfigHash: configData?.currentConfig?.hash,
-            pendingConfigHash: configData?.pendingConfig?.hash,
-            contractsInfo: Object.fromEntries(
-                Object.entries(configData?.currentConfig?.config.config.contracts || {})
-                    .map(([contractId, contract]) => [contractId, {type: contract.type, timeframe: contract.timeframe}]))
-        }
-        addIssues(issuesData, container.configManager.allNodePubkeys().length)
-    } catch (e) {
-        logger.error(`Error requesting statistics: ${e.message}`)
-        return null
-    } finally {
-        setTimeout(requestStatistics, 60000)
-    }
+function nodeIssueDedupKey(pubkey, type) {
+    return 'node:' + pubkey + ':' + type
 }
-
-async function cleanMetrics() {
-    try {
-        const now = new Date()
-        await MetricsModel.deleteMany({
-            createdAt: {$lt: now - 1000 * 60 * 60 * 24 * 7}}
-        ) //delete metrics older than 7 days
-    } catch (e) {
-        logger.error(`Error cleaning metrics: ${e.message}`)
-    } finally {
-        setTimeout(cleanMetrics, 1000 * 60 * 60 * 6) //clean metrics every 6 hours
-    }
+function clusterIssueDedupKey(type) {
+    return 'cluster:' + type
 }
-
-async function saveMetrics() {
-    try {
-        if (Object.keys(gatewaysMetrics).length === 0)
-            return
-        const metrics = new MetricsModel({
-            data: gatewaysMetrics
-        })
-        await metrics.save()
-    } catch (e) {
-        logger.error(`Error saving metrics: ${e.message}`)
-    }
+function oracleIssueDedupKey(oracleId, type) {
+    return 'oracle:' + oracleId + ':' + type
 }
 
 function collectIssues(nodeStatistics, configData) {
@@ -150,197 +40,278 @@ function collectIssues(nodeStatistics, configData) {
     const nodeIssues = {}
     const lastOracleTimestamps = {}
     for (const pubkey in nodeStatistics) {
-        const statistics = nodeStatistics[pubkey]
-        const issues = {}
-        if (!statistics) {
-            nodeIssues[pubkey] = {[issueTypes.NODE_UNAVAILABLE]: new NodeIssueItem(issueTypes.NODE_UNAVAILABLE, 'Node server is unavailable', now)}
+        const stats = nodeStatistics[pubkey]
+        const perNode = {}
+        if (!stats) {
+            nodeIssues[pubkey] = {[issueTypes.NODE_UNAVAILABLE]: new IssueRecord(issueTypes.NODE_UNAVAILABLE, 'Node server is unavailable', now)}
             continue
         }
-        if (statistics.connectionIssues && statistics.connectionIssues.length > 0) {
-            issues[issueTypes.CONNECTION_ISSUES] = new NodeIssueItem(issueTypes.CONNECTION_ISSUES, `Connection issues detected. \n${statistics.connectionIssues.join('\n')}`, now)
+        if (stats.connectionIssues && stats.connectionIssues.length > 0) {
+            perNode[issueTypes.CONNECTION_ISSUES] = new IssueRecord(issueTypes.CONNECTION_ISSUES, `Connection issues detected. \n${stats.connectionIssues.join('\n')}`, now)
         }
-        if (Math.abs(statistics.timeshift) > 5000) {
-            issues[issueTypes.TIME_SHIFT] = new NodeIssueItem(issueTypes.TIME_SHIFT, `${statistics.timeshift}ms timeshift detected. Please, check time on your machine, or the internet connection.`, now)
+        if (Math.abs(stats.timeshift) > 5000) {
+            perNode[issueTypes.TIME_SHIFT] = new IssueRecord(issueTypes.TIME_SHIFT, `${stats.timeshift}ms timeshift detected. Please, check time on your machine, or the internet connection.`, now)
         }
-        if (configData.currentConfig && configData.currentConfig.hash !== statistics.currentConfigHash) {
-            issues[issueTypes.WRONG_CONFIG] = new NodeIssueItem(issueTypes.WRONG_CONFIG, 'Node has wrong config. Please, check that you\'ve signed the current config, or restart the node server', now)
+        if (configData.currentConfig && configData.currentConfig.hash !== stats.currentConfigHash) {
+            perNode[issueTypes.WRONG_CONFIG] = new IssueRecord(issueTypes.WRONG_CONFIG, 'Node has wrong config. Please, check that you\'ve signed the current config, or restart the node server', now)
         }
         if (configData.pendingConfig
             && configData.pendingConfig.status === ConfigStatus.PENDING
-            && configData.pendingConfig.hash !== statistics.pendingConfigHash
-        ) {
-            issues[issueTypes.WRONG_PENDING_CONFIG] = new NodeIssueItem(issueTypes.WRONG_PENDING_CONFIG, 'Node has wrong pending config. Please, restart the node server for sync.', now)
+            && configData.pendingConfig.hash !== stats.pendingConfigHash) {
+            perNode[issueTypes.WRONG_PENDING_CONFIG] = new IssueRecord(issueTypes.WRONG_PENDING_CONFIG, 'Node has wrong pending config. Please, restart the node server for sync.', now)
         }
-        //set last oracle timestamps
-        for (const oracleStatistics of Object.values(statistics.oracleStatistics)) {
+        for (const oracleStatistics of Object.values(stats.oracleStatistics)) {
             const {lastOracleTimestamp, oracleId} = oracleStatistics
             if (!lastOracleTimestamps[oracleId])
                 lastOracleTimestamps[oracleId] = lastOracleTimestamp
-            else if (lastOracleTimestamps[oracleId] < lastOracleTimestamp) {
+            else if (lastOracleTimestamps[oracleId] < lastOracleTimestamp)
                 lastOracleTimestamps[oracleId] = lastOracleTimestamp
-            }
         }
-        nodeIssues[pubkey] = issues
+        nodeIssues[pubkey] = perNode
     }
 
     const oracleIssues = Object.keys(configData.currentConfig?.config.config.contracts || {})
-        .reduce((acc, oracleId) => ({
-            ...acc,
-            [oracleId]: {}
-        }), {})
+        .reduce((acc, oracleId) => ({...acc, [oracleId]: {}}), {})
 
     for (const [oracleId, lastOracleTimestamp] of Object.entries(lastOracleTimestamps)) {
         const contractData = configData.currentConfig?.config?.config.contracts[oracleId]
-        if (!contractData || contractData.type === ContractTypes.ORACLE_BEAM) //we can't handle beam oracles this way
+        if (!contractData || contractData.type === ContractTypes.ORACLE_BEAM)
             continue
-        if (now - lastOracleTimestamp > (contractData.timeframe + contractData.timeframe * .2) * 2) { //if last oracle timestamp is older than 2 timeframes + 20% threshold
+        if (now - lastOracleTimestamp > (contractData.timeframe + contractData.timeframe * .2) * 2) {
             logger.debug(`Price update issue with oracle ${oracleId}, lastOracleTimestamp: ${lastOracleTimestamp}.`)
-            oracleIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new NodeIssueItem(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue with oracle ${oracleId}.`, now)}
+            oracleIssues[oracleId] = {[issueTypes.PRICE_UPDATE_ISSUE]: new IssueRecord(issueTypes.PRICE_UPDATE_ISSUE, `Price update issue with oracle ${oracleId}.`, now)}
         }
     }
 
     const clusterIssues = {}
-    if (configData.pendingConfig && now - configData.pendingConfig.timestamp > 1000 * 60 * 10) { //if pending config update is delayed for more than 10 minutes
-        clusterIssues[issueTypes.CLUSTER_UPDATE_ISSUE] = new NodeIssueItem(issueTypes.CLUSTER_UPDATE_ISSUE, 'Cluster update issue.', now)
+    if (configData.pendingConfig && now - configData.pendingConfig.timestamp > 1000 * 60 * 10) {
+        clusterIssues[issueTypes.CLUSTER_UPDATE_ISSUE] = new IssueRecord(issueTypes.CLUSTER_UPDATE_ISSUE, 'Cluster update issue.', now)
     }
     return {nodeIssues, clusterIssues, oracleIssues}
 }
 
-function addIssues(newIssuesData, totalNodesCount) {
-    //merge new issues with existing ones
-    function getUpdatedIssues(currentIssues, newIssues) {
-        const updated = Object.keys(currentIssues).reduce((acc, key) => {
-            if (key in newIssues) {
-                acc[key] = currentIssues[key]
-                delete newIssues[key]
-            }
-            return acc
-        }, {})
-
-        return {...updated, ...newIssues}
-    }
-
-    for (const pubkey in newIssuesData.nodeIssues) {
-        const currentNodeIssues = issues.nodeIssues[pubkey] || {}
-        const newNodeIssues = newIssuesData.nodeIssues[pubkey] || {}
-        issues.nodeIssues[pubkey] = getUpdatedIssues(currentNodeIssues, newNodeIssues)
-    }
-
-    //check if there is no majority of nodes available
-    if (!hasMajority(totalNodesCount, Object.values(issues.nodeIssues).filter(issue => !issue[issueTypes.NODE_UNAVAILABLE]).length)) {
-        newIssuesData.clusterIssues[issueTypes.NO_MAJORITY] = new NodeIssueItem(issueTypes.NO_MAJORITY, 'No majority of nodes available', Date.now())
-    }
-
-    issues.clusterIssues = getUpdatedIssues(issues.clusterIssues, newIssuesData.clusterIssues)
-
-    for (const oracleId in newIssuesData.oracleIssues) {
-        const currentOracleIssues = issues.oracleIssues[oracleId] || {}
-        const newOracleIssues = newIssuesData.oracleIssues[oracleId] || {}
-        issues.oracleIssues[oracleId] = getUpdatedIssues(currentOracleIssues, newOracleIssues)
-    }
-
-    processIssues()
-}
-
-function getIssuesToSend(issuesContainer) {
-    const issuesToSend = []
-    for (const issue of Object.values(issuesContainer)) {
-        if (issue instanceof NodeIssueItem && issue.shouldSend()) {
-            issuesToSend.push(issue)
-        }
-    }
-    return issuesToSend
-}
-
-
-function processIssues() {
-    let hasIssues = false
-    //node issues
-    for (const pubkey in issues.nodeIssues) {
-        const nodeIssues = issues.nodeIssues[pubkey]
-        hasIssues = hasIssues || Object.keys(nodeIssues).length > 0
-        const notificationsToSend = getIssuesToSend(nodeIssues)
-        if (notificationsToSend.length > 0) {
-            container.emailProvider.sendToPubkey(pubkey, `Node ${pubkey} issues`, `<html><body><h1>Node issues<h1><hr/>${issuesToHtml(notificationsToSend.map(i => i.message))}</body></html>`)
-                .then(() => {
-                    for (const issue of notificationsToSend) {
-                        issue.setNotificationSent()
-                    }
-                })
-                .catch(e => logger.error(`Error sending email to ${pubkey}: ${e.message}`))
-        }
-    }
-
-    //cluster issues
-    const notificationsToSend = getIssuesToSend(issues.clusterIssues)
-    hasIssues = hasIssues || Object.keys(issues.clusterIssues).length > 0
-    for (const oracleId in issues.oracleIssues) {
-        const oracleIssues = issues.oracleIssues[oracleId]
-        hasIssues = hasIssues || Object.keys(oracleIssues).length > 0
-        notificationsToSend.push(...getIssuesToSend(oracleIssues))
-    }
-
-    if (hasIssues) {
-        logger.debug(issues)
-    }
-
-    if (notificationsToSend.length > 0) {
-        container.emailProvider.sendToAll('Cluster issues', `<html><body><h1>Cluster issues<h1><hr/>${issuesToHtml(notificationsToSend.map(i => i.message))}</body></html>`)
-            .then(() => {
-                for (const issue of notificationsToSend) {
-                    issue.setNotificationSent()
-                }
-            })
-            .catch(e => logger.error(`Error sending email to all: ${e.message}`))
-    }
-}
-
-function issuesToHtml(issues) {
-    let issuesHtml = ''
-    for (const issue of issues) {
-        issuesHtml += `<h3>${issue}</h3>`
-    }
-    return issuesHtml
-}
-
 class StatisticsManager {
-
     constructor() {
-        setTimeout(requestStatistics, 10000)
-        cleanMetrics()
-        this.txStatisticsManager = new TxStatisticsManager()
+        setTimeout(() => this.__requestStatistics(), 10000)
+        this.__cleanMetrics()
     }
+
+    __previousDedupKeys = new Set()
+    __statistics = {}
+    __gatewaysMetrics = {}
+    __issues = {nodeIssues: {}, clusterIssues: {}, oracleIssues: {}}
 
     getStatistics() {
         const currentConfig = container.configManager.currentConfig
         const contracts = [...(currentConfig?.contracts.values() || [])]
         const oracles = contracts.filter(contract => ['oracle', 'oracle_beam', 'subscription'].includes(contract.type))
         return {
-            ...statistics,
-            timelines: this.txStatisticsManager.getTimelines(
+            ...this.__statistics,
+            timelines: container.txStatisticsManager.getTimelines(
                 oracles,
-                {
-                    priceHeartbeat: currentConfig?.priceHeartbeat || 2 * 60 * 60 * 1000
-                }
-            )}
+                {priceHeartbeat: currentConfig?.priceHeartbeat || 2 * 60 * 60 * 1000}
+            ),
+            nodes: [...(currentConfig?.nodes?.entries() || [])].map(([pubkey, node]) => ({pubkey, domain: node.domain}))
+        }
     }
 
-    /**
-     * @param {{page: number, limit: number, sortOrder: string}} options - pagination options
-     * @returns {Promise<any>} - metrics
-     */
     async getMetrics(options = {}) {
-        const {
-            page = 1,
-            limit = 10,
-            sortOrder = 'desc'
-        } = options
+        const {page = 1, limit = 10, sortOrder = 'desc'} = options
         const skip = (page - 1) * limit
-
         const sort = {_id: sortOrder === 'asc' ? 1 : -1}
-        return await MetricsModel.find()
-            .sort(sort).limit(limit).skip(skip)
+        return await MetricsModel.find().sort(sort).limit(limit).skip(skip)
+    }
+
+    __reportIssues() {
+        const currentKeys = new Set()
+        for (const pubkey in this.__issues.nodeIssues) {
+            for (const type in this.__issues.nodeIssues[pubkey]) {
+                const item = this.__issues.nodeIssues[pubkey][type]
+                const key = nodeIssueDedupKey(pubkey, type)
+                currentKeys.add(key)
+                container.notificationsManager.report({
+                    category: 'node',
+                    scope: pubkey,
+                    type,
+                    message: item.message,
+                    recipient: {kind: 'pubkey', pubkey},
+                    firstSeenAt: item.timestamp,
+                    dedupKey: key
+                })
+            }
+        }
+        for (const type in this.__issues.clusterIssues) {
+            const item = this.__issues.clusterIssues[type]
+            const key = clusterIssueDedupKey(type)
+            currentKeys.add(key)
+            container.notificationsManager.report({
+                category: 'cluster',
+                type,
+                message: item.message,
+                recipient: {kind: 'all'},
+                firstSeenAt: item.timestamp,
+                dedupKey: key
+            })
+        }
+        for (const oracleId in this.__issues.oracleIssues) {
+            for (const type in this.__issues.oracleIssues[oracleId]) {
+                const item = this.__issues.oracleIssues[oracleId][type]
+                const key = oracleIssueDedupKey(oracleId, type)
+                currentKeys.add(key)
+                container.notificationsManager.report({
+                    category: 'oracle',
+                    scope: oracleId,
+                    type,
+                    message: item.message,
+                    recipient: {kind: 'all'},
+                    firstSeenAt: item.timestamp,
+                    dedupKey: key
+                })
+            }
+        }
+        for (const prev of this.__previousDedupKeys) {
+            if (!currentKeys.has(prev))
+                container.notificationsManager.clear(prev)
+        }
+        this.__previousDedupKeys = currentKeys
+    }
+
+    __recordSignersForAllNodes() {
+        if (!container.txStatisticsManager)
+            return
+        for (const pubkey in this.__statistics.nodeStatistics) {
+            const stats = this.__statistics.nodeStatistics[pubkey]
+            if (!stats || !stats.processedHashes)
+                continue
+            for (const contractId in stats.processedHashes) {
+                const hashes = stats.processedHashes[contractId]
+                if (!hashes || hashes.length === 0)
+                    continue
+                container.txStatisticsManager.recordSigners(contractId, pubkey, hashes)
+            }
+        }
+    }
+
+    async __requestStatistics() {
+        try {
+            const nodes = container.configManager.allNodePubkeys()
+            const requests = []
+            for (const pubkey of nodes) {
+                const channel = container.connectionManager.getNodeConnection(pubkey)
+                const request = async () => {
+                    const result = {pubkey, statistics: null}
+                    try {
+                        if (channel && channel.isReady) {
+                            const statisticsData = await channel.send({type: MessageTypes.STATISTICS_REQUEST})
+                            statisticsData.timeshift = Date.now() - statisticsData.currentTime
+                            result.statistics = statisticsData
+                        }
+                    } catch (e) {
+                        logger.error(`Error requesting statistics from node ${pubkey}: ${e.message}`)
+                    }
+                    return result
+                }
+                requests.push(request())
+            }
+            const nodeStatistics = {}
+            const statisticsData = await Promise.allSettled(requests)
+            for (const response of statisticsData) {
+                if (response.value.statistics) {
+                    this.__gatewaysMetrics[response.value.pubkey] = response.value.statistics.gatewaysMetrics
+                    response.value.statistics.gatewaysMetrics = undefined
+                    for (const oracleId in response.value.statistics.oracleStatistics) {
+                        response.value.statistics.oracleStatistics[oracleId].oracleId = oracleId
+                    }
+                }
+                nodeStatistics[response.value.pubkey] = response.value.statistics
+            }
+
+            await this.__saveMetrics()
+
+            const configData = container.configManager.getCurrentConfigs()
+            const issuesData = collectIssues(nodeStatistics, configData)
+
+            this.__statistics = {
+                nodeStatistics,
+                currentTimestamp: Date.now(),
+                currentConfigHash: configData?.currentConfig?.hash,
+                pendingConfigHash: configData?.pendingConfig?.hash,
+                contractsInfo: Object.fromEntries(
+                    Object.entries(configData?.currentConfig?.config.config.contracts || {})
+                        .map(([contractId, contract]) => [contractId, {type: contract.type, timeframe: contract.timeframe}]))
+            }
+            this.__processIssues(issuesData, nodes.length)
+            this.__reportIssues()
+            this.__recordSignersForAllNodes()
+            try {
+                await container.notificationsManager.flush()
+            } catch (e) {
+                logger.error(`NotificationsManager flush failed: ${e.message}`)
+            }
+        } catch (e) {
+            logger.error(`Error requesting statistics: ${e.message}`)
+            return null
+        } finally {
+            setTimeout(() => this.__requestStatistics(), 60000)
+        }
+    }
+
+
+    __processIssues(newIssuesData, totalNodesCount) {
+        function getUpdatedIssues(currentIssues, newIssues) {
+            const updated = Object.keys(currentIssues).reduce((acc, key) => {
+                if (key in newIssues) {
+                    acc[key] = currentIssues[key]
+                    delete newIssues[key]
+                }
+                return acc
+            }, {})
+            return {...updated, ...newIssues}
+        }
+
+        for (const pubkey in newIssuesData.nodeIssues) {
+            const currentNodeIssues = this.__issues.nodeIssues[pubkey] || {}
+            const newNodeIssues = newIssuesData.nodeIssues[pubkey] || {}
+            this.__issues.nodeIssues[pubkey] = getUpdatedIssues(currentNodeIssues, newNodeIssues)
+        }
+        const __hasMajority = hasMajority(
+            totalNodesCount,
+            Object.values(this.__issues.nodeIssues)
+                .filter(issue => !issue[issueTypes.NODE_UNAVAILABLE]).length
+        )
+        if (!__hasMajority) {
+            newIssuesData.clusterIssues[issueTypes.NO_MAJORITY] = new IssueRecord(issueTypes.NO_MAJORITY, 'No majority of nodes available', Date.now())
+        }
+        this.__issues.clusterIssues = getUpdatedIssues(this.__issues.clusterIssues, newIssuesData.clusterIssues)
+        for (const oracleId in newIssuesData.oracleIssues) {
+            const currentOracleIssues = this.__issues.oracleIssues[oracleId] || {}
+            const newOracleIssues = newIssuesData.oracleIssues[oracleId] || {}
+            this.__issues.oracleIssues[oracleId] = getUpdatedIssues(currentOracleIssues, newOracleIssues)
+        }
+    }
+
+
+    async __cleanMetrics() {
+        try {
+            const now = new Date()
+            await MetricsModel.deleteMany({createdAt: {$lt: now - 1000 * 60 * 60 * 24 * 7}})
+        } catch (e) {
+            logger.error(`Error cleaning metrics: ${e.message}`)
+        } finally {
+            setTimeout(() => this.__cleanMetrics(), 1000 * 60 * 60 * 6)
+        }
+    }
+
+    async __saveMetrics() {
+        try {
+            if (Object.keys(this.__gatewaysMetrics).length === 0)
+                return
+            const metrics = new MetricsModel({data: this.__gatewaysMetrics})
+            await metrics.save()
+        } catch (e) {
+            logger.error(`Error saving metrics: ${e.message}`)
+        }
     }
 }
 
-module.exports = new StatisticsManager()
+module.exports = StatisticsManager

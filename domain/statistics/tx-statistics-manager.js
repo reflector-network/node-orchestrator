@@ -45,25 +45,27 @@ function getParser(type) {
             return {
                 fns: {
                     "create_ballot": (context) => {
-                        context.state.notifications.push({
-                            topic: "Ballot Created",
-                            title: context.source.args[0].title,
-                            desc: context.source.args[0].description,
-                            timestamp: context.timestamp,
-                            tx: context.source.txHash
+                        const arg = context.source.args[0] || {}
+                        container.notificationsManager.report({
+                            category: 'cluster',
+                            type: 'DAO_BALLOT_CREATED',
+                            message: 'Ballot created: ' + (arg.title || '(no title)') + ' - ' + (arg.description || ''),
+                            recipient: {kind: 'monitoring'},
+                            firstSeenAt: Number(context.timestamp),
+                            dedupKey: 'dao:ballot:' + context.source.txHash
                         })
-                        return true
+                        return false
                     },
                     "vote": (context) => {
-                        context.state.notifications.push({
-                            topic: "DAO Vote",
-                            vote: context.source.args[1],
-                            ballotId: context.source.args[0],
-                            voter: context.source,
-                            timestamp: context.timestamp,
-                            tx: context.source.txHash
+                        container.notificationsManager.report({
+                            category: 'cluster',
+                            type: 'DAO_VOTE',
+                            message: 'Vote on ballot ' + context.source.args[0] + ': ' + context.source.args[1] + ' by ' + (context.account || 'unknown'),
+                            recipient: {kind: 'monitoring'},
+                            firstSeenAt: Number(context.timestamp),
+                            dedupKey: 'dao:vote:' + context.source.txHash
                         })
-                        return true
+                        return false
                     }
                 }
             }
@@ -71,16 +73,35 @@ function getParser(type) {
         case "oracle_beam":
             return {
                 fns: {"set_price": (context) => {
-                    context.state.updates[context.source.args[1]] = context.source.txHash
-                    //remove old updates if we have more than maxItemsToStore
-                    const timestamps = Object.keys(context.state.updates).map(ts => BigInt(ts))
-                    if (timestamps.length > maxItemsToStore) {
-                        const sortedTimestamps = timestamps.sort((a, b) => a - b > 0)
-                        while (sortedTimestamps.length > maxItemsToStore) {
-                            delete context.state.updates[sortedTimestamps[0]]
-                            sortedTimestamps.shift()
+                    function restorePricesFromUpdate(update) {
+                        const prices = []
+                        let priceIndex = 0
+
+                        for (let byte = 0; byte < 32; byte++) {
+                            const maskByte = update.mask[byte]
+                            if (maskByte === 0)
+                                continue
+
+                            for (let bit = 0; bit < 8; bit++) {
+                                if (maskByte & (1 << bit)) {
+                                    const assetIndex = byte * 8 + bit
+                                    //fill gaps with zeros
+                                    while (prices.length < assetIndex)
+                                        prices.push(0n)
+                                    prices.push(update.prices[priceIndex++])
+                                }
+                            }
                         }
+
+                        return prices
                     }
+
+                    const tsKey = context.source.args[1].toString()
+                    context.state.addUpdate(tsKey, {
+                        tx: context.source.txHash,
+                        prices: restorePricesFromUpdate(context.source.args[0]),
+                        signers: context.state.updates[tsKey]?.signers || []
+                    })
                     return true
                 }},
                 entries: {"expiration": (context) => { //assetTtls is array of expiration timestamps
@@ -120,7 +141,7 @@ function getParser(type) {
         case "subscription":
             return {
                 fns: {"trigger": (context) => {
-                    context.state.updates[context.source.args[0]] = context.source.txHash
+                    context.state.updates[context.source.args[0]] = {tx: context.source.txHash}
                     return true
                 }} //use trigger timestamp as the update timestamp for subscriptions
             }
@@ -142,30 +163,26 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartb
     const lastSlotTs = normalizeTimestamp(currentTime, timeframe)
     const nowTs = Date.now()
 
-    //generate all expected timestamps
     const timeline = {}
 
     for (let i = 0; i < slotsToProcess; i++) {
         const ts = lastSlotTs - (i * timeframe)
 
-        //hash is present for this timestamp
-        if (updates[ts] !== undefined) {
-            timeline[ts] = updates[ts]
+        if (updates[ts]?.tx !== undefined) {
+            timeline[ts] = updates[ts]?.tx//{tx: updates[ts].tx, signers: updates[ts].signers || []}
             continue
         }
 
-        //current timestamp, it can delay
         if (nowTs - ts < gracePeriod) {
             timeline[ts] = STATUS.PENDING
             continue
         }
 
         let isRequired = true
-        if (heartbeat && normalizeTimestamp(ts, heartbeat) !== ts) { //heartbeat timestamp
+        if (heartbeat && normalizeTimestamp(ts, heartbeat) !== ts) {
             isRequired = false
         }
 
-        //if there are no active ranges, all timestamps are not required
         const isWithinActiveRange = (activeTtls || []).some(([start, end]) =>
             ts >= BigInt(start) && ts <= BigInt(end)
         ) && isRequired
@@ -180,8 +197,8 @@ function buildSubscriptionTimeline(updates, now, data) {
     const timeline = {}
     for (const triggerTimestamps of data) {
         const ts = Number(triggerTimestamps)
-        if (updates[ts] !== undefined) {
-            timeline[ts] = updates[ts]
+        if (updates[ts]?.tx !== undefined) {
+            timeline[ts] = {tx: updates[ts].tx, signers: updates[ts].signers || []}
             continue
         }
 
@@ -196,9 +213,10 @@ function buildSubscriptionTimeline(updates, now, data) {
 
 class StatisticsData {
     constructor(account, type) {
-        this.updates = {}
         this.account = account
         this.type = type
+        this.__updates = {}
+        this.__hashToUpdate = {}
         this.entries = {}
     }
 
@@ -209,22 +227,48 @@ class StatisticsData {
 
     /**
      * Map of transaction hash by transaction timestamp
-     * @type {Object<bigint, string>}
+     * @type {Object<bigint, {tx: string, prices: Array<bigint>, signers: Array<string>}>}
      */
-    updates
+    get updates() {
+        return this.__updates
+    }
 
-    /**
-     * An array of asset ttl ranges. Each range is represented as a tuple [start, end].
-     * This is necessary for oracles to determine if there are gaps in active contract.
-     * @type {Object<string, any>}
-     */
-    entries
+    getUpdateByHash(txHash) {
+        const timestamp = this.__hashToUpdate[txHash]
+        return timestamp !== undefined ? this.__updates[timestamp] : undefined
+    }
 
-    /**
-     * An array of notifications related to the contract.
-     * @type {Array<{topic: string, type: string, [key: string]: any, timestamp: bigint}>}
-     */
-    notifications = []
+    addUpdate(timestamp, update) {
+        let normalizedUpdate = update
+        if (!normalizedUpdate?.tx)
+            normalizedUpdate = {tx: normalizedUpdate}
+        this.__updates[timestamp] = normalizedUpdate
+        this.__hashToUpdate[normalizedUpdate.tx] = timestamp
+        this.__pruneStateMaps()
+    }
+
+    toPlainObject() {
+        return {
+            account: this.account,
+            type: this.type,
+            updates: this.__updates,
+            entries: this.entries
+        }
+    }
+
+    __pruneStateMaps() {
+        const tsKeys = Object.keys(this.__updates).map(ts => BigInt(ts))
+        if (tsKeys.length <= maxItemsToStore)
+            return
+        const sorted = tsKeys.sort((a, b) => (a > b ? 1 : -1))
+        while (sorted.length > maxItemsToStore) {
+            const oldest = sorted[0].toString()
+            const tx = this.__updates[oldest]?.tx
+            delete this.__updates[oldest]
+            delete this.__hashToUpdate[tx]
+            sorted.shift()
+        }
+    }
 }
 
 class TxStatisticsManager {
@@ -282,6 +326,97 @@ class TxStatisticsManager {
         return statistics
     }
 
+    /**
+     * Append pubkey to state.signers[ts] for each hash in `hashes` that maps
+     * to a known landed ts on the given contract. Hashes that don't resolve
+     * are silently dropped (in-flight or pre-retention-window). Idempotent.
+     *
+     * @param {string} contractId
+     * @param {string} pubkey
+     * @param {string[]} hashes
+     */
+    recordSigners(contractId, pubkey, hashes) {
+        if (!this.__contractsState || !pubkey || !hashes || hashes.length === 0)
+            return
+        const state = this.__contractsState.clusterStatistics.get(contractId)
+        if (!state)
+            return
+        for (const hash of hashes) {
+            const update = state.getUpdateByHash(hash)
+            if (!update)
+                continue
+            logger.debug({msg: `Recording signer for hash ${hash}`, contractId, pubkey})
+            const list = update.signers || (update.signers = [])
+            if (!list.includes(pubkey))
+                list.push(pubkey)
+        }
+    }
+
+    /**
+     * Compare the current round's prices against the previous round and
+     * report PRICE_SPIKE events for assets that moved >= 20%.
+     *
+     * @param {string} contractId
+     * @param {string} tsKey - timestamp of the freshly applied round
+     */
+    __detectPriceSpike(contractId, tsKey) {
+        const state = this.__contractsState && this.__contractsState.clusterStatistics.get(contractId)
+        const {assets, dataSource, type} = container.configManager.currentConfig?.contracts.get(contractId) || {}
+        if (!state || !state.updates || !assets) {
+            logger.debug({msg: 'Contract not found or missing data', contractId})
+            return
+        }
+        const currentTs = BigInt(tsKey)
+        const curr = state.updates[tsKey]?.prices
+        if (!Array.isArray(curr))
+            return
+        function getPriceDiff(oldPrice, newPrice) {
+            //if old price is 0 and new price is 0, or both 0 - skip the diff
+            if (
+                (oldPrice > 0n && newPrice === 0n)
+                || (oldPrice === 0n && newPrice === 0n)
+            )
+                return 0
+            //if old price is 0 and new price is not 0, return 100% diff
+            else if (oldPrice === 0n && newPrice > 0n)
+                return 0
+
+            const absDiff = oldPrice > newPrice ? oldPrice - newPrice : newPrice - oldPrice
+            const percentageDiff = (absDiff * 1000n) / oldPrice
+
+            return Number(percentageDiff)
+        }
+        const descOrdered = Object.keys(state.updates)
+            .filter((ts) => BigInt(ts) < currentTs)
+            .map((ts) => BigInt(ts))
+            .sort((a, b) => a > b ? -1 : a < b ? 1 : 0)
+        for (let i = 0; i < curr.length; i++) {
+            let prevPrice = 0n
+            for (const ts of descOrdered) {
+                prevPrice = state.updates[ts]?.prices?.[i] || 0n
+                if (prevPrice > 0n)
+                    break
+            }
+            const currentPrice = curr[i] || 0n
+            if (prevPrice === 0n || currentPrice === 0n)
+                continue
+            const diff = getPriceDiff(prevPrice, currentPrice)
+            if (diff < this.__changeThreshold)
+                continue
+            container.notificationsManager.report({
+                category: 'oracle',
+                scope: contractId,
+                type: 'PRICE_SPIKE',
+                message: `Asset ${assets[i].code} on oracle ${contractId} (${dataSource}, ${type}) moved ${prevPrice.toString()} → ${currentPrice.toString()} (${+(diff / 10).toFixed(2)}%) at ${tsKey}`,
+                recipient: {kind: 'monitoring'},
+                firstSeenAt: Number(currentTs),
+                dedupKey: `oracle:${contractId}:asset:${i}:PRICE_SPIKE`
+            })
+        }
+    }
+
+    __changeThreshold = 200
+
     async __loadContractStatistics() {
         const doc = await StatisticsModel.findOne().exec()
         if (doc) {
@@ -292,9 +427,10 @@ class TxStatisticsManager {
                     logger.trace(`Loading statistics from db. ${contractId} is not part of the current config. Skipping.`)
                     continue
                 }
-                contractState.updates = stats.updates
-                contractState.entries = stats.entries
-                contractState.notifications = stats.notifications || []
+                for (const [key, value] of Object.entries(stats.updates || {})) {
+                    contractState.addUpdate(key, value)
+                }
+                contractState.entries = stats.entries || {}
             }
             this.__contractsState.lastLedger = normalizedData.data.lastLedger
         }
@@ -404,7 +540,10 @@ class TxStatisticsManager {
                             const parser = getParser(state.type)?.fns?.[fnName]
                             if (!parser)
                                 continue
-                            //normalize data
+                            let before
+                            if (fnName === 'set_price' && state.type !== 'subscription' && args.length >= 2) {
+                                before = state.updates[args[1].toString()]
+                            }
                             parser({
                                 source: {fn: fnName, args, txHash: tx.hash},
                                 account: tx.source_account,
@@ -412,6 +551,11 @@ class TxStatisticsManager {
                                 ledger: tx.ledger_attr,
                                 state
                             })
+                            if (fnName === 'set_price' && state.type !== 'subscription' && args.length >= 2) {
+                                const tsKey = args[1].toString()
+                                if (state.updates[tsKey] && state.updates[tsKey] !== before)
+                                    this.__detectPriceSpike(contractId, tsKey)
+                            }
                         }
                     }
                 } catch (err) {
@@ -424,6 +568,10 @@ class TxStatisticsManager {
             logger.error(`Error updating transactions: ${error.message}`)
             return false
         }
+    }
+
+    __getParserFn(type, fnName) {
+        return getParser(type).fns[fnName]
     }
 
     async __transactionsWorker() {
@@ -448,6 +596,11 @@ class TxStatisticsManager {
             }, {upsert: true}).exec().catch(err => {
                 logger.error(`Error saving contract statistics: ${err.message}`)
             })
+            try {
+                await container.notificationsManager.flush()
+            } catch (e) {
+                logger.error(`NotificationsManager flush failed: ${e.message}`)
+            }
             logger.debug(`Transactions worker completed.`)
             logger.trace(`Current statistics state: ${Math.max(...Object.values(rawData.clusterStatistics).map(o => Object.keys(o.updates).length))}. Last ledger: ${rawData.lastLedger}`)
         } catch (error) {
@@ -459,3 +612,4 @@ class TxStatisticsManager {
 }
 
 module.exports = TxStatisticsManager
+module.exports.StatisticsData = StatisticsData
