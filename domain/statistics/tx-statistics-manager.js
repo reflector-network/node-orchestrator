@@ -410,7 +410,7 @@ class TxStatisticsManager {
                 message: `Asset ${assets[i].code} on oracle ${contractId} (${dataSource}, ${type}) moved ${prevPrice.toString()} → ${currentPrice.toString()} (${+(diff / 10).toFixed(2)}%) at ${tsKey}`,
                 recipient: {kind: 'monitoring'},
                 firstSeenAt: Number(currentTs),
-                dedupKey: `oracle:${contractId}:asset:${i}:PRICE_SPIKE`
+                dedupKey: `oracle:${contractId}:asset:${i}:${tsKey}:PRICE_SPIKE`
             })
         }
     }

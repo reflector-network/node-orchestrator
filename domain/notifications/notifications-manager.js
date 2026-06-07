@@ -21,8 +21,8 @@ const throttleHoursByType = {
     TIME_SHIFT: 24,
     PRICE_UPDATE_ISSUE: 1,
     CLUSTER_UPDATE_ISSUE: 6,
-    PRICE_SPIKE: 1,
-    DAO_BALLOT_CREATED: 24 * 365, //effectively send-once: dedupKey includes txHash
+    PRICE_SPIKE: 24 * 365,
+    DAO_BALLOT_CREATED: 24 * 365,
     DAO_VOTE: 24 * 365
 }
 
