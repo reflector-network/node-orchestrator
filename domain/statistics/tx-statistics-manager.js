@@ -169,7 +169,7 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartb
         const ts = lastSlotTs - (i * timeframe)
 
         if (updates[ts]?.tx !== undefined) {
-            timeline[ts] = updates[ts]?.tx//{tx: updates[ts].tx, signers: updates[ts].signers || []}
+            timeline[ts] = {tx: updates[ts].tx, signers: updates[ts].signers || []}
             continue
         }
 
