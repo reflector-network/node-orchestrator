@@ -184,7 +184,7 @@ describe('TxStatisticsManager __detectPriceSpike', () => {
         const call = notificationsManager.report.mock.calls[0][0]
         expect(call.type).toBe('PRICE_SPIKE')
         expect(call.scope).toBe('C1')
-        expect(call.dedupKey).toBe('oracle:C1:asset:0:PRICE_SPIKE')
+        expect(call.dedupKey).toBe('oracle:C1:asset:0:200:PRICE_SPIKE')
         expect(call.recipient).toEqual({kind: 'monitoring'})
         expect(call.message).toMatch(/100/) //includes prev
         expect(call.message).toMatch(/120/) //includes curr
@@ -196,8 +196,8 @@ describe('TxStatisticsManager __detectPriceSpike', () => {
         expect(notificationsManager.report).toHaveBeenCalledTimes(2)
         const keys = notificationsManager.report.mock.calls.map(c => c[0].dedupKey)
         expect(keys).toEqual(expect.arrayContaining([
-            'oracle:C1:asset:0:PRICE_SPIKE',
-            'oracle:C1:asset:2:PRICE_SPIKE'
+            'oracle:C1:asset:0:200:PRICE_SPIKE',
+            'oracle:C1:asset:2:200:PRICE_SPIKE'
         ]))
     })
 
@@ -274,16 +274,15 @@ describe('TxStatisticsManager DAO parser', () => {
 })
 
 describe('TxStatisticsManager getTimelines shape', () => {
-    test('oracle slots emit {hash, signers} for landed rounds', () => {
+    test('oracle slots emit {tx, signers} for landed rounds', () => {
         const mgr = new TxStatisticsManager()
         mgr.__contractsState = {lastLedger: 0, clusterStatistics: new Map()}
         const now = Date.now()
         const tf = 60 * 1000
         const landedTs = Math.floor(now / tf) * tf - tf //one slot ago
         const state = {
-            updates: {[landedTs]: 'HASHX'},
+            updates: {[landedTs]: {tx: 'HASHX', signers: ['GNODEA', 'GNODEB']}},
             prices: {[landedTs]: [1n]},
-            signers: {[landedTs]: ['GNODEA', 'GNODEB']},
             type: 'oracle',
             account: 'GADMIN',
             entries: {expiration: [[0n, BigInt(now) + 1000000n]]}
@@ -293,7 +292,7 @@ describe('TxStatisticsManager getTimelines shape', () => {
             [{contractId: 'C1', type: 'oracle', timeframe: tf}],
             {priceHeartbeat: 0}
         )
-        expect(result.C1[landedTs]).toEqual({hash: 'HASHX', signers: ['GNODEA', 'GNODEB']})
+        expect(result.C1[landedTs]).toEqual({tx: 'HASHX', signers: ['GNODEA', 'GNODEB']})
     })
 
     test('landed slot with no recorded signers emits empty array', () => {
@@ -303,9 +302,8 @@ describe('TxStatisticsManager getTimelines shape', () => {
         const tf = 60 * 1000
         const landedTs = Math.floor(now / tf) * tf - tf
         const state = {
-            updates: {[landedTs]: 'HASHY'},
+            updates: {[landedTs]: {tx: 'HASHY'}}, //no signer recorded yet
             prices: {[landedTs]: [1n]},
-            signers: {}, //no signer recorded yet
             type: 'oracle',
             account: 'GADMIN',
             entries: {expiration: [[0n, BigInt(now) + 1000000n]]}
@@ -315,7 +313,7 @@ describe('TxStatisticsManager getTimelines shape', () => {
             [{contractId: 'C1', type: 'oracle', timeframe: tf}],
             {priceHeartbeat: 0}
         )
-        expect(result.C1[landedTs]).toEqual({hash: 'HASHY', signers: []})
+        expect(result.C1[landedTs]).toEqual({tx: 'HASHY', signers: []})
     })
 
     test('missing/pending/inactive slots remain bare STATUS numbers', () => {
