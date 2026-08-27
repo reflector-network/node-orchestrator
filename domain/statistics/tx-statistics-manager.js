@@ -523,17 +523,17 @@ class TxStatisticsManager {
                     if (tx.inner_transaction) {
                         continue //skip inner transactions, they will be processed with their parent transaction
                     }
-                    const isHostFnTx = xdr.TransactionResult.fromXDR(tx.result_xdr, 'base64').result().value().some(r => r.value().switch().name === 'invokeHostFunction')
+                    const isHostFnTx = xdr.TransactionResult.fromXdr(tx.result_xdr, 'base64').result.value.some(r => r.value.type === 'invokeHostFunction')
                     if (isHostFnTx) {
-                        const envelope = xdr.TransactionEnvelope.fromXDR(tx.envelope_xdr, 'base64')
-                        const operations = envelope.value().tx().operations()
+                        const envelope = xdr.TransactionEnvelope.fromXdr(tx.envelope_xdr, 'base64')
+                        const operations = envelope.value.tx.operations
                         for (let i = 0; i < operations.length; i++) {
-                            const hostFunction = operations[i].body().value().hostFunction()
-                            if (hostFunction.switch().name !== 'hostFunctionTypeInvokeContract')
+                            const hostFunction = operations[i].body.value.hostFunction
+                            if (hostFunction.type !== 'hostFunctionTypeInvokeContract')
                                 continue
-                            const fnName = hostFunction.value().functionName().toString()
-                            const args = [...hostFunction.value().args()].map(v => scValToNative(v))
-                            const contractId = Address.contract(hostFunction.value().contractAddress().contractId()).toString()
+                            const fnName = hostFunction.value.functionName.toString()
+                            const args = [...hostFunction.value.args].map(v => scValToNative(v))
+                            const contractId = Address.contract(hostFunction.value.contractAddress.contractId.toBytes()).toString()
                             const state = this.__contractsState.clusterStatistics.get(contractId)
                             if (!state)
                                 continue

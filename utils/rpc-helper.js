@@ -121,7 +121,7 @@ async function getContractInstance(contractId, urls) {
     const contractData = await makeServerRequest(contractDataRequestFn, urls)
     if (!contractData)
         return null
-    return contractData.val.contractData().val().instance()
+    return contractData.val.contractData.val.instance
 }
 
 /**
@@ -134,11 +134,11 @@ function getNativeStorage(values, keys) {
     const storage = {}
     if (values && keys.length > 0)
         for (const value of values) {
-            const key = scValToNative(value.key())
+            const key = scValToNative(value.key)
             const keyIndex = keys.indexOf(key)
             if (keyIndex < 0)
                 continue
-            const val = scValToNative(value.val())
+            const val = scValToNative(value.val)
             storage[key] = val
             //remove found key
             keys.splice(keyIndex, 1)
@@ -152,7 +152,7 @@ async function getContractEntries(contract, urls, keys) {
     const instance = await getContractInstance(contract, urls)
     if (!instance)
         return {}
-    return getNativeStorage(instance.storage(), keys)
+    return getNativeStorage(instance.storage, keys)
 }
 
 

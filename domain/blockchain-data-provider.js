@@ -56,7 +56,7 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
     })
     if (!tx)
         return null
-    logger.debug(`Update tx: ${tx.transaction.toXDR()}, maxTime: ${maxTime}, hasMoreTxns: ${tx.hasMoreTxns}, fee: ${fee}, iteration: ${iteration}, sequence: ${tx.transaction.sequence}, syncTimestamp: ${syncTimestamp}`)
+    logger.debug(`Update tx: ${tx.transaction.toXdr()}, maxTime: ${maxTime}, hasMoreTxns: ${tx.hasMoreTxns}, fee: ${fee}, iteration: ${iteration}, sequence: ${tx.transaction.sequence}, syncTimestamp: ${syncTimestamp}`)
     return {
         hash: tx.hashHex,
         maxTime,

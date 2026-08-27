@@ -70,7 +70,7 @@ function getSignedEnvelope(config, kp, rejected = false) {
     const messageToSign = `${pubkey}:${JSON.stringify(sortObjectKeys(payload))}`
 
     const messageHash = createHash('sha256').update(messageToSign, 'utf8').digest()
-    const signature = kp.sign(messageHash).toString('hex')
+    const signature = Buffer.from(kp.sign(messageHash)).toString('hex')
 
     return {
         config,
