@@ -1,7 +1,6 @@
 const {Account} = require('@stellar/stellar-sdk')
 const {buildUpdateTransaction} = require('@reflector/reflector-shared')
 const logger = require('../logger')
-const {getTransactions} = require('../utils/horizon-helper')
 const container = require('./container')
 
 //These constants are a deliberate mirror of the submit schedule in
@@ -64,38 +63,8 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
     }
 }
 
-/**
- * Fetches the last transactions for all contracts in the cluster.
- * @returns {Promise<Object.<string, string[]>>} - A map of contract IDs to their last transaction hashes.
- */
-async function getLastClusterTransactions() {
-    //ensure that the config is loaded
-    const config = container.configManager.currentConfig
-    if (!config)
-        return
-    const requests = new Map()
-    //get all transaction sources
-    for (const [contractId, account] of [...config.contracts.values()]
-        .map(c => [c.contractId, c.admin])
-        .concat([null, config.systemAccount])) {
-        requests.set(contractId, getTransactions(account))
-    }
-    await Promise.allSettled(...requests.values())
-    return requests.entries().reduce((acc, [contractId, promise]) => {
-        if (promise.status === 'fulfilled' && promise.value) {
-            acc[contractId] = promise.value.map(tx => ({
-                hash: tx.hash
-            }))
-        } else {
-            logger.warn(`Failed to get transactions for contract ${contractId}: ${promise.reason?.message || 'Unknown error'}`)
-        }
-        return acc
-    }, {})
-}
-
 module.exports = {
     getUpdateTxHash,
-    getLastClusterTransactions,
     maxSubmitAttempts,
     baseUpdateFee,
     FEE_MULTIPLIER,

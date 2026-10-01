@@ -121,12 +121,12 @@ describe('forwarding routes check their body shape', () => {
     })
 
     test('POST /gateways still forwards a well-formed body', async () => {
-        const res = await post(app, '/gateways', {urls: ['http://gateway.example.com'], challenge: 'c1'})
+        const res = await post(app, '/gateways', {urls: ['https://gateway.example.com'], challenge: 'c1'})
 
         expect(res.status).toBe(200)
         expect(sent).toHaveLength(1)
         expect(sent[0].data.data).toEqual({
-            urls: ['http://gateway.example.com'],
+            urls: ['https://gateway.example.com'],
             challenge: 'c1',
             nonce,
             path: `gateways?nonce=${nonce}`

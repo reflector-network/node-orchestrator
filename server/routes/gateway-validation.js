@@ -1,16 +1,48 @@
 const logger = require('../../logger')
-const {validateRequestUrl} = require('../../utils/ssrf-validator')
+const {validateRequestUrl, validateGatewayUrl, maxGatewayUrls, maxGatewayUrlLength} = require('../../utils/ssrf-validator')
 const {safeGetJson, timeoutError, requestTimeout} = require('../../utils/safe-request')
 const {badRequest} = require('../errors')
 
-const maxGatewaysPerRequest = 20
+//the node's own cap: a list longer than this is one every node refuses, so it is not worth probing either
+const maxGatewaysPerRequest = maxGatewayUrls
 //requestTimeout bounds one probe; this bounds the route as a whole. Without it the worst case is maxGatewaysPerRequest
-//urls by two probes by requestTimeout, about 200 s of held request. Six probe deadlines - 30 s - is ample for twenty
-//gateways that each answer in well under a second, and bounds a caller who supplies twenty slow hosts
+//urls by two probes by requestTimeout, about 100 s of held request. Six probe deadlines - 30 s - is ample for ten
+//gateways that each answer in well under a second, and bounds a caller who supplies ten slow hosts
 const totalValidationBudget = requestTimeout * 6
 const maxValidationKeyLength = 256
 const maxVersionLength = 64
 const binanceTimeUrl = 'https://api.binance.com/api/v3/time'
+
+//each rule of validateGatewayUrl, told apart by the message it throws and answered with a fixed string of its own:
+//the thrown message can carry the scheme or the host, and the answer must not echo any part of the url
+const gatewayUrlRules = [
+    {test: e => e.message.startsWith('Gateway URL must be a non-empty string'), rule: `must be a non-empty string of at most ${maxGatewayUrlLength} characters`},
+    {test: e => e.code === 'ERR_INVALID_URL', rule: 'must be an absolute url'},
+    {test: e => e.message.startsWith('Gateway URL must use '), rule: 'must use http or https'},
+    {test: e => e.message.startsWith('Gateway URL must not contain user information'), rule: 'must not contain user information'},
+    {test: e => e.message.startsWith('Gateway URL must not contain a query string or a fragment'), rule: 'must not contain a query string or a fragment'},
+    {test: e => e.message.startsWith('Gateway URL points at a private address'), rule: 'must not point at a private address'}
+]
+
+/**
+ * Refuse a gateway list a node would refuse, with the rules the node applies. The list is checked as
+ * submitted, before any deduplication, because that is the list a node receives and counts.
+ * @param {string[]} urls - gateway urls, already known to be strings
+ * @returns {void}
+ * @throws {HttpError} 400 naming the rule broken and the index of the entry that broke it, never the url itself
+ */
+function checkGatewayUrls(urls) {
+    if (urls.length > maxGatewayUrls)
+        throw badRequest(`urls must contain at most ${maxGatewayUrls} entries`)
+    urls.forEach((url, index) => {
+        try {
+            validateGatewayUrl(url)
+        } catch (e) {
+            const match = gatewayUrlRules.find(({test}) => test(e))
+            throw badRequest(`urls[${index}] ${match ? match.rule : 'is not an acceptable gateway url'}`)
+        }
+    })
+}
 
 /**
  * Validate the POST /validate-gateways body before anything reaches the network
@@ -29,6 +61,8 @@ function validateGatewaysBody(body) {
     //so a body that may leave it out is a body the /gateways allowed-keys check accepts and forwards
     if (typeof validationKey !== 'string' || !validationKey || validationKey.length > maxValidationKeyLength)
         throw badRequest('validationKey must be a non-empty string')
+    //a url every node would refuse is refused here as well, rather than probed and reported healthy
+    checkGatewayUrls(urls)
     return {urls: [...new Set(urls)], validationKey}
 }
 
@@ -110,4 +144,4 @@ async function validateGateways(urls, validationKey, budget = totalValidationBud
     return result
 }
 
-module.exports = {validateGatewaysBody, validateGateway, validateGateways, maxGatewaysPerRequest, totalValidationBudget}
+module.exports = {checkGatewayUrls, validateGatewaysBody, validateGateway, validateGateways, maxGatewaysPerRequest, totalValidationBudget}

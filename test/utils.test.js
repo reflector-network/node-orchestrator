@@ -23,3 +23,24 @@ describe('stripRejectedSignatures', () => {
         expect(stripRejectedSignatures(null)).toBeNull()
     })
 })
+
+describe('parseBoundedInt', () => {
+    const {parseBoundedInt} = require('../domain/utils')
+
+    test('returns the fallback for an absent value', () => {
+        expect(parseBoundedInt(undefined, 10, 1, 100)).toBe(10)
+        expect(parseBoundedInt(null, 10, 1, 100)).toBe(10)
+        expect(parseBoundedInt('', 10, 1, 100)).toBe(10)
+    })
+
+    test('parses a numeric string and clamps it', () => {
+        expect(parseBoundedInt('5', 10, 1, 100)).toBe(5)
+        expect(parseBoundedInt('1000000', 10, 1, 100)).toBe(100)
+        expect(parseBoundedInt(-3, 10, 1, 100)).toBe(1)
+    })
+
+    test('refuses a value that is not a safe integer', () => {
+        expect(() => parseBoundedInt('abc', 10, 1, 100)).toThrow('Invalid pagination parameter')
+        expect(() => parseBoundedInt({$gt: 1}, 10, 1, 100)).toThrow('Invalid pagination parameter')
+    })
+})

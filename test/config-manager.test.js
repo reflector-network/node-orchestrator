@@ -3,13 +3,30 @@ const {createHash} = require('crypto')
 const {sortObjectKeys} = require('@reflector/reflector-shared')
 const ConfigManager = require('../domain/config-manager')
 const AppConfig = require('../domain/app-config')
-const {connect, dropDatabase} = require('../persistence-layer')
+const {connect, dropDatabase, disconnect} = require('../persistence-layer')
 const HandlersManager = require('../server/ws/handlers/handlers-manager')
 const ConnectionManager = require('../domain/connections-manager')
 const NodeSettingsManager = require('../domain/node-settings-manager')
 const constants = require('./constants')
 
 const configManager = new ConfigManager()
+
+//ConfigManager.init starts processPendingConfig, which re-arms itself with setTimeout for the life of the process and
+//keeps no handle anyone could clear, so jest never exited after this file. The timers armed here are recorded,
+//and teardown clears them and stops a round still in flight from arming another
+const realSetTimeout = global.setTimeout
+const armedTimers = new Set()
+let tornDown = false
+const setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation((fn, delay, ...args) => {
+    if (tornDown)
+        return undefined
+    const timer = realSetTimeout((...callbackArgs) => {
+        armedTimers.delete(timer)
+        fn(...callbackArgs)
+    }, delay, ...args)
+    armedTimers.add(timer)
+    return timer
+})
 
 beforeAll(async () => {
     const container = require('../domain/container')
@@ -25,7 +42,12 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+    tornDown = true
+    for (const timer of armedTimers)
+        clearTimeout(timer)
+    setTimeoutSpy.mockRestore()
     await dropDatabase()
+    await disconnect()
 })
 
 test('creating config', async () => {

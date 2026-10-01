@@ -85,7 +85,14 @@ class ChannelBase {
             }
             try {
                 if (!this.__ws || this.__ws.readyState !== WebSocket.OPEN) {
-                    reject(new Error(`Connection is not open. ${this.__getConnectionInfo()}`))
+                    const pending = this.__requests[message.requestId]
+                    if (pending && !message.responseId) { //nothing was sent, so nothing will answer
+                        clearTimeout(pending.responseTimeout)
+                        delete this.__requests[message.requestId]
+                    }
+                    const error = new Error(`Connection is not open. ${this.__getConnectionInfo()}`)
+                    error.notConnected = true
+                    reject(error)
                     return
                 }
                 this.__ws.send(JSON.stringify(message), (err) => {

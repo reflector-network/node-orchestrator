@@ -10,6 +10,7 @@ const {
     areAllSignaturesPresent,
     ContractTypes
 } = require('@reflector/reflector-shared')
+const {StrKey} = require('@stellar/stellar-sdk')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const ChannelTypes = require('../server/ws/channel-types')
@@ -17,7 +18,7 @@ const logger = require('../logger')
 const {getUpdateTx, getAccountSequence} = require('../utils/rpc-helper')
 const ConfigStatus = require('./config-status')
 const nonceProvider = require('./nonce-provider')
-const {computeUpdateStatus, stripRejectedSignatures} = require('./utils')
+const {computeUpdateStatus, stripRejectedSignatures, parseBoundedInt} = require('./utils')
 const notificationProvider = require('./notification-provider')
 const container = require('./container')
 const {setManagers} = require('./subscription-data-provider')
@@ -163,6 +164,34 @@ function getAnonymousUpdate(configItem) {
     return config
 }
 
+const maxHistoryPageSize = 100
+
+/**
+ * Turn the raw query of GET /config/history into a safe Mongo filter
+ * @param {any} filter - raw req.query
+ * @returns {{query: object, page: number, pageSize: number}}
+ */
+function buildHistoryQuery(filter) {
+    const query = {}
+    const status = filter?.status
+    if (status !== undefined) {
+        if (typeof status !== 'string' || !Object.values(ConfigStatus).includes(status))
+            throw new ValidationError('Invalid status filter')
+        query.status = status
+    }
+    const initiator = filter?.initiator
+    if (initiator !== undefined) {
+        if (typeof initiator !== 'string' || !StrKey.isValidEd25519PublicKey(initiator))
+            throw new ValidationError('Invalid initiator filter')
+        query['signatures.0.pubkey'] = initiator
+    }
+    return {
+        query,
+        page: parseBoundedInt(filter?.page, 1, 1, Number.MAX_SAFE_INTEGER),
+        pageSize: parseBoundedInt(filter?.pageSize, 10, 1, maxHistoryPageSize)
+    }
+}
+
 class ConfigManager {
     /**
      * @param {string[]} defaultNodes - The default node pubkeys
@@ -208,28 +237,17 @@ class ConfigManager {
         }
     }
     /**
-     * @param {{ status: string, initiator: string, page: number, pageSize: number }} filter - The filter
-     * @param {boolean} onlyPublicFields - Flag to return only public fields
+     * Configuration history for a registered node key. Envelopes are returned in full: the route authenticates, and
+     * every node key already receives `clusterSecret` over the `CONFIG` message.
+     * @param {{status: string, initiator: string, page: number, pageSize: number}} filter - raw req.query
      * @returns {Promise<ConfigEnvelopeDto[]>}
      */
-    async history(filter, onlyPublicFields) {
-        const query = {}
-        if (filter?.status)
-            query.status = filter.status
-        if (filter?.initiator)
-            query['signatures.0.pubkey'] = filter.initiator
-
-        const page = filter?.page || 1
-        const pageSize = filter?.pageSize || 10
-        const skip = (page > 0 ? page - 1 : page) * pageSize
+    async history(filter) {
+        const {query, page, pageSize} = buildHistoryQuery(filter)
+        const skip = (page - 1) * pageSize
 
         const configDocs = await ConfigEnvelopeModel.find(query).sort({createdAt: -1}).skip(skip).limit(pageSize).exec()
-        return configDocs.map(d => {
-            const plainObject = d.toPlainObject()
-            if (onlyPublicFields)
-                cleanupConfig(plainObject)
-            return plainObject
-        })
+        return configDocs.map(d => d.toPlainObject())
     }
     /**
      * Submits an envelope. Submissions run one at a time: the whole method is a read-modify-write over the pending
@@ -436,6 +454,7 @@ async function rejectPendingConfig() {
 }
 
 const updateIdleTimeframe = 1000 * 60 * 2 //2 minutes
+const updateGracePeriod = 1000 * 60 * 3 //3 minutes for every node to see the PENDING envelope before it executes
 
 function isPendingConfigExpired() {
     return __pendingConfig.envelope.timestamp < Date.now()
@@ -664,11 +683,18 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
     return configItem
 }
 
+/**
+ * Pick the execution time of an update that reached PENDING. Without an explicit timestamp the update runs a grace
+ * period after the later of `minDate` and now.
+ * @param {number} timestamp - timestamp carried by the envelope, 0 when the proposer left it open
+ * @param {number} [minDate] - earliest execution time the config allows
+ * @returns {number}
+ */
 function getTimestamp(timestamp, minDate) {
     if (timestamp)
         return timestamp
-    minDate = normalizeTimestamp(Math.max(minDate || Date.now()), updateIdleTimeframe)
-    return minDate + 1000 * 60 * 3 //10 minutes
+    const earliest = normalizeTimestamp(Math.max(minDate || 0, Date.now()), updateIdleTimeframe)
+    return earliest + updateGracePeriod
 }
 
 /**
@@ -725,3 +751,4 @@ function getConfigForClient(configItem) {
 }
 
 module.exports = ConfigManager
+module.exports.getTimestamp = getTimestamp

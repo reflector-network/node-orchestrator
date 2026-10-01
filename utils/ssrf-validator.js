@@ -88,6 +88,10 @@ function isPrivateIPv6(ip) {
     const prefix = b.slice(0, 10).every(byte => byte === 0)
     if (prefix && b[10] === 0xff && b[11] === 0xff)
         return isPrivateIPv4(b.slice(12, 16).join('.')) //::ffff:0:0/96 IPv4-mapped
+    //::ffff:0:0:0/96 IPv4-translated (RFC 2765, SIIT): the kernel never maps it, but a translator in front of the host
+    //carries it to the IPv4 address inside, so it is judged by that address like the mapped form
+    if (b.slice(0, 8).every(byte => byte === 0) && b[8] === 0xff && b[9] === 0xff && b[10] === 0 && b[11] === 0)
+        return isPrivateIPv4(b.slice(12, 16).join('.'))
     if (prefix && b[10] === 0 && b[11] === 0) {
         //:: unspecified, ::1 loopback, and the deprecated ::/96 IPv4-compatible range
         const embedded = b.slice(12, 16)
@@ -112,8 +116,53 @@ function isPrivateIP(ip) {
 }
 
 /**
- * Parse a caller-supplied gateway URL and refuse anything that is not plain http(s). Every rejection carries a
- * safeMessage, so the route always has a reason it can echo without describing the network it just looked at.
+ * Strips the brackets the URL parser keeps around an IPv6 literal, so the value can be checked with net.isIP.
+ * `new URL('http://[::1]/').hostname` is the six-character string "[::1]", which net.isIP rejects.
+ * @param {string} hostname - URL hostname
+ * @returns {string}
+ */
+function unbracketHost(hostname) {
+    return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+}
+
+//the rules a node applies to the gateway list it routes through, kept identical to the node's copy so the orchestrator
+//refuses exactly the lists every node would refuse. The probe of /validate-gateways still goes through
+//validateRequestUrl and resolveAndValidate below, which add the resolved-address check at request time
+const maxGatewayUrls = 10
+const maxGatewayUrlLength = 2048
+
+/**
+ * Validates one gateway URL at config time. A gateway receives this node's static x-gateway-validation token, so
+ * embedded credentials are refused outright, and an explicit private address is refused too.
+ * @param {string} urlString - gateway url
+ * @returns {string} the url with trailing slashes removed
+ */
+function validateGatewayUrl(urlString) {
+    if (typeof urlString !== 'string' || !urlString || urlString.length > maxGatewayUrlLength)
+        throw new Error(`Gateway URL must be a non-empty string of at most ${maxGatewayUrlLength} characters`)
+    const parsed = new URL(urlString)
+    //http is allowed: the dashboard and the gateway image are http only, and
+    //https-only gateways are not required
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+        throw new Error(`Gateway URL must use http or https, got ${parsed.protocol}`)
+    if (parsed.username || parsed.password)
+        throw new Error('Gateway URL must not contain user information')
+    //a bare `?` or `#` leaves search and hash empty but stays in the url, and would turn the path appended later into a
+    //query string or a fragment
+    if (parsed.search || parsed.hash || /[?#]/.test(parsed.href))
+        throw new Error('Gateway URL must not contain a query string or a fragment')
+    const host = unbracketHost(parsed.hostname)
+    if (net.isIP(host) && isPrivateIP(host))
+        throw new Error(`Gateway URL points at a private address: ${host}`)
+    //the parsed form, not the raw string: the parser drops tabs, newlines and surrounding spaces the raw string would
+    //carry into every request url, and lower-cases the host
+    return parsed.href.replace(/\/+$/, '')
+}
+
+/**
+ * Parse a url the orchestrator is about to request and refuse anything that is not plain http(s). Every rejection
+ * carries a safeMessage, so the route always has a reason it can echo without describing the network it just looked
+ * at. This is the counterpart of the node's validateWebhookUrl; it is not the gateway rule set above.
  * @param {string} urlString - url to validate
  * @returns {URL}
  */
@@ -139,23 +188,33 @@ function validateRequestUrl(urlString) {
 }
 
 /**
- * The error an aborted deadline reports. The reason the signal carries is preferred, so the caller sees why the
- * budget ended rather than a generic cancellation.
+ * The error an aborted deadline reports. The reason the signal carries is preferred when it has a safeMessage, so the
+ * caller sees why the budget ended rather than a generic cancellation; otherwise the error always carries one.
  * @param {AbortSignal} signal - aborted signal
  * @returns {Error}
  */
 function abortReason(signal) {
-    if (signal.reason instanceof Error)
+    //the property is tested, not `instanceof Error`: an abort without a reason leaves a DOMException, which is an Error
+    //in Node but carries no safeMessage for the caller to echo
+    if (signal.reason?.safeMessage)
         return signal.reason
     const error = new Error('Host resolution aborted')
     error.safeMessage = 'Gateway request timed out'
     return error
 }
 
+//dns.lookup runs on the libuv threadpool (4 threads by default) and cannot be cancelled, so a lookup abandoned at its
+//deadline keeps its thread until the resolver answers or the OS gives up. A resolver that never answers
+//could otherwise fill the pool and stall every other dns, fs and crypto call in the process. Capping lookups in flight
+//at 2 keeps at least 2 of the 4 threads free for that other work, whatever the resolver does.
+const maxLookupsInFlight = 2
+let lookupsInFlight = 0
+
 /**
  * Resolve a hostname without outliving the caller's deadline. dns.promises.lookup takes no signal, so the only way to
  * bound it is to stop waiting for it: the lookup is left to settle on its own and its answer discarded. Sharing the
  * caller's signal keeps resolution, connect and read on one budget rather than giving each its own timer.
+ * At most maxLookupsInFlight lookups run at once; one more is refused at once rather than queued.
  * @param {string} host - hostname to resolve
  * @param {AbortSignal} [signal] - deadline shared with the rest of the request
  * @returns {Promise<string>} resolved address
@@ -163,7 +222,17 @@ function abortReason(signal) {
 function lookupWithin(host, signal) {
     if (signal?.aborted)
         return Promise.reject(abortReason(signal))
-    const lookup = dns.promises.lookup(host, {family: 0}).then(result => result.address)
+    if (lookupsInFlight >= maxLookupsInFlight) {
+        //refused rather than queued: a queue would only move the wait, and the host is left out of both messages
+        const error = new Error('Host lookup refused: too many lookups in flight')
+        error.safeMessage = 'Too many host lookups in progress'
+        return Promise.reject(error)
+    }
+    const pending = dns.promises.lookup(host, {family: 0})
+    //counted once the lookup has started, so a synchronous throw cannot leak a slot. The slot is released when the
+    //lookup itself settles, never when the deadline gives up on it: an abandoned lookup still holds its thread
+    lookupsInFlight++
+    const lookup = pending.finally(() => lookupsInFlight--).then(result => result.address)
     if (!signal)
         return lookup
     return new Promise((resolve, reject) => {
@@ -182,8 +251,7 @@ function lookupWithin(host, signal) {
  */
 async function resolveAndValidate(urlString, options = {}) {
     const parsed = validateRequestUrl(urlString)
-    //URL strips the brackets of an IPv6 literal from `hostname` on most inputs; strip them again defensively
-    const host = parsed.hostname.replace(/^\[|\]$/g, '')
+    const host = unbracketHost(parsed.hostname)
     const ip = net.isIP(host) ? host : await lookupWithin(host, options.signal)
     if (isPrivateIP(ip)) {
         const error = new Error(`SSRF blocked: ${host} resolved to private IP ${ip}`)
@@ -193,4 +261,13 @@ async function resolveAndValidate(urlString, options = {}) {
     return {url: parsed, resolvedIp: ip}
 }
 
-module.exports = {validateRequestUrl, resolveAndValidate, isPrivateIP, toIPv6Bytes}
+module.exports = {
+    validateRequestUrl,
+    resolveAndValidate,
+    isPrivateIP,
+    unbracketHost,
+    toIPv6Bytes,
+    validateGatewayUrl,
+    maxGatewayUrls,
+    maxGatewayUrlLength
+}

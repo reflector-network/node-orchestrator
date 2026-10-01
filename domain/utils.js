@@ -1,4 +1,4 @@
-const {getMajority} = require('@reflector/reflector-shared')
+const {getMajority, ValidationError} = require('@reflector/reflector-shared')
 const ConfigStatus = require('./config-status')
 
 function computeUpdateStatus(signatures, totalNodesCount, isInitConfig = false) {
@@ -35,9 +35,28 @@ function stripRejectedSignatures(rawEnvelope) {
     return {...rawEnvelope, signatures: rawEnvelope.signatures.filter(signature => !signature.rejected)}
 }
 
+/**
+ * Parse a pagination parameter that arrived from a query string. Express parses the query with qs, so a parameter can
+ * be an object or an array; anything that is not a safe integer is refused rather than handed to Mongo.
+ * @param {any} value - raw query parameter
+ * @param {number} fallback - value used when the parameter is absent
+ * @param {number} min - lower bound
+ * @param {number} max - upper bound
+ * @returns {number}
+ */
+function parseBoundedInt(value, fallback, min, max) {
+    if (value === undefined || value === null || value === '')
+        return fallback
+    const parsed = typeof value === 'number' ? value : parseInt(value, 10)
+    if (!Number.isSafeInteger(parsed))
+        throw new ValidationError('Invalid pagination parameter')
+    return Math.min(Math.max(parsed, min), max)
+}
+
 module.exports = {
     isDebugging,
     computeUpdateStatus,
     mailRegex,
-    stripRejectedSignatures
+    stripRejectedSignatures,
+    parseBoundedInt
 }

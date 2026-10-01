@@ -25,8 +25,6 @@ function registerRoute(app, route, options, handler) {
         authMode = AuthMode.auth
     } = options
 
-    let prettyPrint = false
-
     switch (authMode) {
         case AuthMode.auth:
             middleware.unshift(authenticate)
@@ -40,9 +38,8 @@ function registerRoute(app, route, options, handler) {
     middleware.unshift(corsMiddleware[cors])
 
     app[method](prefix + route, middleware, function (req, res, next) {
-        if (req.query && req.query.prettyPrint !== undefined) {
-            prettyPrint = true
-        }
+        //per request: a flag kept in the closure would let one request switch the route for everyone
+        const prettyPrint = !!(req.query && req.query.prettyPrint !== undefined)
         processResponse(res, handler(req, res), headers, prettyPrint, next)
     })
     app.options(prefix + route, middleware, function (req, res) {

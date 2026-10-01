@@ -1,7 +1,7 @@
 const fs = require('fs')
-const path = require('path')
 const pino = require('pino')
 const rfs = require('rotating-file-stream')
+const {errorSerializer, msgSerializer} = require('./logger-cleanup')
 
 const isDev = process.env.NODE_ENV === 'development'
 const traceLevel = 'trace'
@@ -12,9 +12,10 @@ const folder = './home/logs/'
 const MAX_LOG_FILE_SIZE = '2M'
 const LOG_RETENTION_DAYS = '7d'
 
-const basePath = path.resolve(path.resolve(process.cwd()), '..') + path.sep
-
-const circularRefTag = 'circular-ref-tag'
+//fast-redact has no recursive wildcard and its leading * matches exactly one path segment, so each secret key is listed
+//at every depth a log call reaches: a config item logged under a key holds the cluster secret four segments down
+const secretKeys = ['clusterSecret', 'apiKey', 'secret']
+const secretPaths = secretKeys.flatMap(key => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`])
 
 const originalConsoleError = console.error
 const originalConsoleWarn = console.warn
@@ -71,51 +72,19 @@ console.debug = (...args) => {
         originalConsoleDebug(...args)
 }
 
-//replace absolute paths in stack trace with relative paths
-const cleanup = data => {
-    if (data && typeof data === 'object') {
-        data[circularRefTag] = true
-        const keys = Object.getOwnPropertyNames(data)
-        for (const key of keys) {
-            const value = data[key]
-            if (key === circularRefTag || (value && typeof value === 'object' && value[circularRefTag]))
-                continue
-            data[key] = cleanup(data[key])
-        }
-        delete data[circularRefTag]
-        return data
-    } else if (Array.isArray(data)) {
-        for (let i = 0; i < data.length; i++) {
-            data[i] = cleanup(data[i])
-        }
-        return data
-    } else if (typeof data !== 'string') {
-        return data
-    }
-    return data
-        .replaceAll(basePath, './')
-        .replaceAll(/(\d+)\.(\d+)\.(\d+)\.(\d+)/g, '$1.***.***.$4')
-        .replaceAll('\\', '/')
-}
-
-const errorSerializer = err => {
-    if (err) {
-        err = cleanup(err)
-    }
-    return pino.stdSerializers.err(err)
-}
-
-const msgSerializer = msg => {
-    if (msg) {
-        msg = cleanup(msg)
-    }
-    return typeof msg === 'string' ? msg : {msg}
-}
-
 const baseLogOptions = {
     level: defaultLevel,
     timestamp: () => `,"time":"${new Date().toISOString()}"`,
     serializers: {err: errorSerializer, msg: msgSerializer},
+    redact: {
+        paths: [
+            'err.config.headers.authorization',
+            'err.config.headers.Authorization',
+            'err.config.data',
+            ...secretPaths
+        ],
+        censor: '[redacted]'
+    },
     formatters: {
         level(label) {
             return {level: label}

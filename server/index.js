@@ -6,7 +6,8 @@ const {ValidationError} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('../domain/container')
 const registerSwaggerRoute = require('./swagger')
-const {HttpError, badRequest} = require('./errors')
+const {HttpError, badRequest, fromRelayError} = require('./errors')
+const {logAuthFailure} = require('./auth-failure-log')
 const configRoutes = require('./routes/config-routes')
 const registerLokiProxy = require('./loki-proxy').registerLokiProxy
 const {handleConnection, isNodeUpgrade, nodeWsServerOptions, wsServerOptions} = require('./ws/connection-handler')
@@ -14,6 +15,26 @@ const statisticsRoutes = require('./routes/statistics-routes')
 const logRoutes = require('./routes/log-routes')
 const settingsRoutes = require('./routes/node-settings-routes')
 const subscriptionRoutes = require('./routes/subscription-routes')
+
+/**
+ * Logs a failed request at the level its cause deserves: a refused credential at warn, because a stream of them
+ * needs an operator's attention; a node that refused, timed out or is gone at warn, because it is the node's
+ * condition rather than the orchestrator's; any other 4xx at debug; everything else at error
+ * @param {object} req - request
+ * @param {Error} err - error the request failed with
+ */
+function logRequestError(req, err) {
+    if (err.code === 401 || err.code === 403)
+        logAuthFailure(req, err)
+    else if (err.code >= 400 && err.code < 500) //routine: an unknown node, malformed input; no stack worth keeping
+        logger.debug(`${req.method} ${req.originalUrl} -> ${err.code}: ${err.message}`)
+    else if (err.isRelayError)
+        logger.warn(`${req.method} ${req.originalUrl} -> ${err.code}: ${err.message}`)
+    else if (process.env.NODE_ENV === 'test')
+        logger.error(err.message)
+    else
+        logger.error(err)
+}
 
 function normalizePort(val) {
     const port = parseInt(val, 10)
@@ -56,11 +77,8 @@ class Server {
         //error handler
         this.app.use((err, req, res, next) => {
             if (err) {
-                if (process.env.NODE_ENV === 'test')
-                    logger.error(err.message)
-                else
-                    logger.error(err)
-
+                err = fromRelayError(err) || err
+                logRequestError(req, err)
                 if (res.headersSent)
                     return next(err)
                 if (err instanceof ValidationError)
@@ -68,8 +86,7 @@ class Server {
                 if (err instanceof HttpError)
                     return res.status(err.code).json({error: err.message, status: err.code})
                 //unhandled error
-                logger.error(err)
-                res.status(500).json({error: 'Internal server error', status: 500})
+                return res.status(500).json({error: 'Internal server error', status: 500})
             }
             res.status((err && err.code) || 500).end()
         })

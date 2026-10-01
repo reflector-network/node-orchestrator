@@ -23,3 +23,8 @@ describe('blockchain-data-provider submit schedule', () => {
         expect(FEE_MULTIPLIER).toBe(8)
     })
 })
+
+test('the module exports only the live helpers', () => {
+    const provider = require('../domain/blockchain-data-provider')
+    expect(Object.keys(provider).sort()).toEqual(['FEE_MULTIPLIER', '__getMaxTime', 'baseUpdateFee', 'getUpdateTxHash', 'maxSubmitAttempts'].sort())
+})

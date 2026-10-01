@@ -64,8 +64,10 @@ function subscriptionRoutes(app) {
      *         description: Subscriptions
      *         content:
      *           application/json:
-     *             type: array
-     *             items: '#/components/schemas/Subscription'
+     *             schema:
+     *               type: array
+     *               items:
+     *                 $ref: '#/components/schemas/Subscription'
      */
     registerRoute(app, 'subscriptions/:contractId/owner/:owner', {method: 'get', authMode: AuthMode.noAuth}, (req) => {
         const manager = getManager(req.params.contractId)

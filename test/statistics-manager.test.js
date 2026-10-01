@@ -8,7 +8,7 @@ jest.mock('../domain/container', () => ({
     notificationsManager: {report: jest.fn(), clear: jest.fn(), flush: jest.fn().mockResolvedValue(undefined)},
     txStatisticsManager: {recordSigners: jest.fn(), getTimelines: jest.fn().mockReturnValue({})}
 }))
-jest.mock('../persistence-layer/models/metrics-model', () => ({deleteMany: () => ({}), save: async () => {}}))
+jest.mock('../persistence-layer/models/metrics-model', () => ({deleteMany: () => ({}), save: async () => {}, find: jest.fn()}))
 
 const {BSON} = require('mongoose').mongo
 const container = require('../domain/container')
@@ -707,6 +707,46 @@ describe('every contract type that has a timeline reaches getTimelines', () => {
         statisticsManager.getStatistics()
 
         expect(container.txStatisticsManager.getTimelines).toHaveBeenCalledWith(contracts.slice(0, 3), {priceHeartbeat: 3600000})
+    })
+})
+
+describe('getMetrics bounds its query parameters', () => {
+    const MetricsModel = require('../persistence-layer/models/metrics-model')
+    let cursor
+
+    beforeEach(() => {
+        //records what reaches Mongo: the chain getMetrics builds on MetricsModel.find()
+        cursor = {sort: jest.fn(), limit: jest.fn(), skip: jest.fn()}
+        cursor.sort.mockReturnValue(cursor)
+        cursor.limit.mockReturnValue(cursor)
+        cursor.skip.mockResolvedValue(['doc'])
+        MetricsModel.find.mockReset()
+        MetricsModel.find.mockReturnValue(cursor)
+    })
+
+    test('query strings are parsed, and the page size is capped at 100', async () => {
+        expect(await statisticsManager.getMetrics({page: '3', limit: '1000000', sortOrder: 'asc'})).toEqual(['doc'])
+        expect(cursor.sort).toHaveBeenCalledWith({_id: 1})
+        expect(cursor.limit).toHaveBeenCalledWith(100)
+        expect(cursor.skip).toHaveBeenCalledWith(200)
+    })
+
+    test('absent parameters fall back to the first page of ten, newest first', async () => {
+        await statisticsManager.getMetrics({})
+        expect(cursor.sort).toHaveBeenCalledWith({_id: -1})
+        expect(cursor.limit).toHaveBeenCalledWith(10)
+        expect(cursor.skip).toHaveBeenCalledWith(0)
+    })
+
+    test('a page below one is read as the first page', async () => {
+        await statisticsManager.getMetrics({page: '-4', limit: '0'})
+        expect(cursor.limit).toHaveBeenCalledWith(1)
+        expect(cursor.skip).toHaveBeenCalledWith(0)
+    })
+
+    test('a parameter qs parsed into an object is refused before Mongo is queried', async () => {
+        await expect(statisticsManager.getMetrics({limit: {$gt: 0}})).rejects.toThrow('Invalid pagination parameter')
+        expect(MetricsModel.find).not.toHaveBeenCalled()
     })
 })
 

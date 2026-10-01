@@ -47,24 +47,15 @@ async function init(container) {
 
     container.app = {shutdown}
 
-    try {
-        process.on('unhandledRejection', (reason, p) => {
-            logger.error({err: reason}, 'Unhandled Rejection at: Promise')
-        })
+    process.on('SIGINT', async () => {
+        await shutdown()
+    })
 
-        process.on('SIGINT', async () => {
-            await shutdown()
-        })
+    process.on('SIGTERM', async () => {
+        await shutdown()
+    })
 
-        process.on('SIGTERM', async () => {
-            await shutdown()
-        })
-
-        return container.server
-    } catch (e) {
-        logger.error(e)
-        await shutdown(13)
-    }
+    return container.server
 }
 
 module.exports = init

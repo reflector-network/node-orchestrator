@@ -76,8 +76,48 @@ function notFound(message = null, details = null) {
         details
     })
 }
+function badGateway(message = null) {
+    return generateError({message: withDetails('Bad gateway.', message), code: 502})
+}
+function serviceUnavailable(message = null) {
+    return generateError({message: withDetails('Service unavailable.', message), code: 503})
+}
+function gatewayTimeout(message = null) {
+    return generateError({message: withDetails('Gateway timeout.', message), code: 504})
+}
+
+//a node's own refusal is relayed to the operator, cut to a length that cannot flood the answer or the log
+const maxPeerErrorLength = 512
+
+/**
+ * Maps a failed request relayed to a node onto the answer that says what went wrong, using the flags ChannelBase sets
+ * on the error it rejects with. These are expected conditions of a node, not faults of the orchestrator
+ * @param {Error} error - error a relayed request was rejected with
+ * @returns {HttpError|null} the answer to give, or null when the error did not come from a relay
+ */
+function fromRelayError(error) {
+    let relayed = null
+    if (error.isPeerError)
+        relayed = badGateway('Node refused the request: ' + String(error.message).substring(0, maxPeerErrorLength))
+    else if (error.timeout)
+        relayed = gatewayTimeout('Node did not answer in time')
+    else if (error.connectionClosed)
+        relayed = badGateway('Node connection closed before it answered')
+    else if (error.notConnected)
+        relayed = serviceUnavailable('Node is not connected')
+    if (relayed)
+        relayed.isRelayError = true
+    return relayed
+}
+
+/**
+ * @param {string} invalidParamName - name of the parameter that failed validation
+ * @param {string} [message] - additional detail
+ * @param {any} [details] - structured detail
+ * @returns {Error}
+ */
 function validationError(invalidParamName, message = null, details = null) {
-    return this.badRequest(`Invalid parameter: ${invalidParamName}.`, message, details)
+    return badRequest(`Invalid parameter: ${invalidParamName}. ${message || ''}`.trim(), details)
 }
 function notImplemented() {
     return new Error('Not implemented')
@@ -91,6 +131,10 @@ module.exports = {
     forbidden,
     unauthorized,
     notFound,
+    badGateway,
+    serviceUnavailable,
+    gatewayTimeout,
+    fromRelayError,
     validationError,
     notImplemented
 }

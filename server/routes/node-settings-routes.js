@@ -1,8 +1,9 @@
 const container = require('../../domain/container')
 const {registerRoute} = require('../route')
 const MessageTypes = require('../ws/handlers/message-types')
-const {badRequest, notFound} = require('../errors')
-const {validateGatewaysBody, validateGateways} = require('./gateway-validation')
+const {badRequest} = require('../errors')
+const {getConnectedNode} = require('./node-relay')
+const {checkGatewayUrls, validateGatewaysBody, validateGateways} = require('./gateway-validation')
 
 //a POST /validate-gateways body is {urls, validationKey}: it must not pass the POST /gateways shape check, because
 //the forwarded message would then clear the node's challenge with `challenge: undefined`. The check only holds because
@@ -88,9 +89,7 @@ function settingsRoutes(app) {
      *
      */
     registerRoute(app, 'gateways', {method: 'get'}, async (req) => {
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
-        if (!node)
-            throw new Error('Node not found')
+        const node = getConnectedNode(req.pubkey)
         const data = {
             data: {payload: req.payload},
             signature: req.signature
@@ -126,9 +125,10 @@ function settingsRoutes(app) {
             throw badRequest('challenge must be a string')
         if (Object.keys(req.body).some(key => !gatewaysBodyFields.has(key)))
             throw badRequest('unexpected body field')
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
-        if (!node)
-            throw notFound('Node not found')
+        //the node refuses a list that breaks its gateway rules and then sends nothing at all rather than go direct, so
+        //a list it would refuse is not forwarded; the signed payload itself is relayed untouched
+        checkGatewayUrls(urls)
+        const node = getConnectedNode(req.pubkey)
         //relay the payload the middleware authenticated instead of rebuilding it, so the node hashes the same
         //bytes the signature covers - the payload now carries the route binding as well as the body
         const data = {data: req.payload, signature: req.signature}
@@ -137,7 +137,7 @@ function settingsRoutes(app) {
 
     /**
      * @openapi
-     * /gateways:
+     * /validate-gateways:
      *   post:
      *     summary: Validate gateways
      *     tags:
@@ -146,7 +146,17 @@ function settingsRoutes(app) {
      *       - ed25519Auth: []
      *     requestBody:
      *       content:
-     *         application/json
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               urls:
+     *                 type: array
+     *                 items:
+     *                   type: string
+     *               validationKey:
+     *                 type: string
+     *             required: [urls, validationKey]
      *     responses:
      *       200:
      *         description: Ok

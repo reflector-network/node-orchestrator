@@ -6,6 +6,7 @@ const MessageTypes = require('../../server/ws/handlers/message-types')
 const MetricsModel = require('../../persistence-layer/models/metrics-model')
 const container = require('../container')
 const ConfigStatus = require('../config-status')
+const {parseBoundedInt} = require('../utils')
 
 const issueTypes = {
     CONNECTION_ISSUES: 'CONNECTION_ISSUES',
@@ -21,6 +22,7 @@ const issueTypes = {
 const maxConnectionIssues = 50
 const maxIssueLength = 512
 const maxProcessedHashes = 1000
+const maxMetricsPageSize = 100
 const txHashPattern = /^[0-9a-f]{64}$/
 //a node's clock may drift this far from ours before TIME_SHIFT is raised
 const maxClockDrift = 5000
@@ -236,10 +238,10 @@ class StatisticsManager {
     }
 
     async getMetrics(options = {}) {
-        const {page = 1, limit = 10, sortOrder = 'desc'} = options
-        const skip = (page - 1) * limit
-        const sort = {_id: sortOrder === 'asc' ? 1 : -1}
-        return await MetricsModel.find().sort(sort).limit(limit).skip(skip)
+        const page = parseBoundedInt(options.page, 1, 1, Number.MAX_SAFE_INTEGER)
+        const limit = parseBoundedInt(options.limit, 10, 1, maxMetricsPageSize)
+        const sort = {_id: options.sortOrder === 'asc' ? 1 : -1}
+        return await MetricsModel.find().sort(sort).limit(limit).skip((page - 1) * limit)
     }
 
     __reportIssues() {

@@ -136,6 +136,21 @@ describe('ChannelBase pending requests', () => {
             expect(channel.__requests).toEqual({})
         })
 
+        test('a request on a socket that is no longer open fails as not connected and leaves nothing pending', async () => {
+            const ws = makeFakeSocket()
+            const channel = new IncomingChannel(ws, PUBKEY, true)
+            ws.readyState = WebSocket.CLOSED
+            const timersBefore = jest.getTimerCount()
+
+            const error = await channel.send({type: MessageTypes.LOGS_REQUEST, data: {}}).catch(e => e)
+
+            expect(error.message).toBe('Connection is not open. GABCDEF 2')
+            expect(error.notConnected).toBe(true)
+            expect(channel.__requests).toEqual({})
+            expect(jest.getTimerCount()).toBe(timersBefore)
+            expect(ws.send).not.toHaveBeenCalled()
+        })
+
         test('but not on an error that leaves the socket open, such as a frame that is not json', () => {
             const {ws, channel} = withPendingRequest()
 

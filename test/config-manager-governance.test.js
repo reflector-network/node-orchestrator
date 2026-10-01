@@ -432,3 +432,64 @@ describe('per-hash update confirmation', () => {
         expect(model.__get('pending-1').status).toBe('applied')
     })
 })
+
+describe('history filter validation', () => {
+    async function loaded() {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        return await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+    }
+
+    test('refuses a mongo operator in the status filter', async () => {
+        const {configManager} = await loaded()
+        await expect(configManager.history({status: {$ne: 'applied'}}, true)).rejects.toThrow('Invalid status filter')
+    })
+
+    test('refuses a status outside the enum and an initiator that is not a public key', async () => {
+        const {configManager} = await loaded()
+        await expect(configManager.history({status: 'whatever'}, true)).rejects.toThrow('Invalid status filter')
+        await expect(configManager.history({initiator: 'not-a-key'}, true)).rejects.toThrow('Invalid initiator filter')
+    })
+
+    test('accepts a valid filter', async () => {
+        const {configManager} = await loaded()
+        const rows = await configManager.history({status: 'applied', page: '1', pageSize: '5'}, true)
+        expect(rows).toHaveLength(1)
+        expect(rows[0].status).toBe('applied')
+        //the route needs a registered node key and node keys already hold the secret
+        expect(rows[0].config.clusterSecret).toBe('seed-cluster-secret')
+    })
+
+    test('hands Mongo a bounded page: at most 100 rows, skipping whole pages', async () => {
+        const {configManager, model} = await loaded()
+        const cursor = {sort: jest.fn(), skip: jest.fn(), limit: jest.fn(), exec: jest.fn(() => [])}
+        for (const step of ['sort', 'skip', 'limit'])
+            cursor[step].mockReturnValue(cursor)
+        model.find = jest.fn(() => cursor)
+
+        await configManager.history({initiator: getNodeKeypairs(1)[0].publicKey(), page: '3', pageSize: '1000000'}, true)
+        expect(model.find).toHaveBeenCalledWith({'signatures.0.pubkey': getNodeKeypairs(1)[0].publicKey()})
+        expect(cursor.skip).toHaveBeenCalledWith(200)
+        expect(cursor.limit).toHaveBeenCalledWith(100)
+
+        await configManager.history({page: '0'}, true)
+        expect(model.find).toHaveBeenLastCalledWith({})
+        expect(cursor.skip).toHaveBeenLastCalledWith(0)
+        expect(cursor.limit).toHaveBeenLastCalledWith(10)
+    })
+
+    test('returns every stored envelope exactly as stored, cluster secret and node urls included', async () => {
+        //the dead public-view branch discarded cleanupConfig's result, so /config/history has always sent full
+        //envelopes; removing the branch must not change a byte of the response
+        const {configManager, model} = await loaded()
+        const rows = await configManager.history({})
+        expect(JSON.stringify(rows)).toBe(JSON.stringify(model.__all()))
+        const node = Object.values(rows[0].config.nodes)[0]
+        expect(node.url).toBe('ws://127.0.0.1:3000')
+        expect(rows[0].config.clusterSecret).toBe('seed-cluster-secret')
+    })
+})

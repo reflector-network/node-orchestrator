@@ -39,7 +39,7 @@ function statisticsRoutes(app) {
      *         schema:
      *           type: integer
      *       - in: query
-     *         name: sort
+     *         name: sortOrder
      *         description: asc or desc
      *         schema:
      *           type: string

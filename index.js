@@ -13,6 +13,15 @@ const NotificationManager = require('./domain/notifications/notifications-manage
 const TxStatisticsManager = require('./domain/statistics/tx-statistics-manager')
 const StatisticsManager = require('./domain/statistics/statistics-manager')
 
+//registered first, so a failure during boot is logged through the rotating stream and exits with the intended code
+process.on('unhandledRejection', (reason) => {
+    logger.error({err: reason}, 'Unhandled rejection')
+})
+process.on('uncaughtException', (err) => {
+    logger.error({err}, 'Uncaught exception')
+    setTimeout(() => process.exit(13), 1000)
+})
+
 BigInt.prototype.toJSON = function () {
     return this.toString()
 }

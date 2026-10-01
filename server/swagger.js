@@ -4,7 +4,7 @@ const swaggerUi = require('swagger-ui-express')
 const globalSwaggerConfig = {
     openapi: '3.0.0',
     info: {
-        title: 'Billing Server API',
+        title: 'Reflector Node Orchestrator API',
         version: '1.0.0'
     },
     tags: [
@@ -19,7 +19,7 @@ const globalSwaggerConfig = {
                 type: "apiKey",
                 in: "header",
                 name: "authorization",
-                description: "Header must include public key, signature, nonce and rejected flag."
+                description: "Header must be `<pubkey>.<hexSignature>.<nonce>`, signed with the node key."
             }
         },
         schemas: {
@@ -45,7 +45,8 @@ const globalSwaggerConfig = {
                 type: 'object',
                 properties: {
                     pubkey: {type: 'string'},
-                    url: {type: 'string'}
+                    url: {type: 'string'},
+                    domain: {type: 'string'}
                 },
                 required: ['pubkey', 'url']
             },
@@ -170,7 +171,7 @@ const globalSwaggerConfig = {
                     uptime: {
                         type: 'integer'
                     },
-                    сurrentTime: {
+                    currentTime: {
                         type: 'integer',
                         format: 'int64'
                     },
@@ -231,7 +232,13 @@ const globalSwaggerConfig = {
                         type: 'number'
                     },
                     updated: {
-                        type: 'string'
+                        type: 'string',
+                        description: 'Last charge, or creation while there has been none, in milliseconds'
+                    },
+                    lastCharge: {
+                        type: 'integer',
+                        format: 'int64',
+                        description: '`updated` as a number'
                     },
                     base: {
                         type: 'object'
@@ -267,10 +274,28 @@ const options = {
     apis: ['./server/routes/*.js']
 }
 
-const specs = swaggerJsdoc(options)
+/**
+ * Build the specification from the route annotations
+ * @returns {object}
+ */
+function getSwaggerSpec() {
+    return swaggerJsdoc(options)
+}
 
+/**
+ * Mount the swagger ui. The specification describes every authenticated route and the ui itself is unauthenticated,
+ * so it stays out of production deployments. It is opt-in: only `npm run dev` (NODE_ENV=development) or an
+ * explicit ENABLE_SWAGGER=true mounts it, so a launch that sets neither - node index.js, pm2, a bare Dockerfile CMD -
+ * does not publish it.
+ * @param {object} app - Express app instance
+ * @returns {boolean} true when the ui was mounted
+ */
 const registerSwaggerRoute = (app) => {
-    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs))
+    if (process.env.NODE_ENV !== 'development' && process.env.ENABLE_SWAGGER !== 'true')
+        return false
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(getSwaggerSpec()))
+    return true
 }
 
 module.exports = registerSwaggerRoute
+module.exports.getSwaggerSpec = getSwaggerSpec

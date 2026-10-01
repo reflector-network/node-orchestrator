@@ -1,4 +1,5 @@
 const logger = require('../logger')
+const {safeUrl} = require('../logger-cleanup')
 
 //The url that answered last, per configured url list (Soroban RPC and Horizon lists alike). Without it every request
 //walked the list in configured order, so a first url that hangs cost its whole deadline on every request. The same
@@ -51,11 +52,11 @@ function rememberGoodUrl(urls, url) {
  * Make a request to multiple server URLs, starting at the one that answered last, and return the result from the
  * first successful request.
  * @param {string[]} urls - list of server URLs
- * @param {(serverUrl: string) => any} serverCtor - function to create a server instance
- * @param {(server: any) => Promise<any>} requestFn - function to make a request using the server instance
+ * @param {function} serverCtor - builds a server instance from a url
+ * @param {function} requestFn - makes the request with a server instance
  * @param {{quiet: boolean}} [options] - quiet: the caller expects a refusal and logs the errors itself once it knows
  * what the failure was; they are logged at debug here and always travel as the thrown error's cause
- * @returns {Promise<any>} - resolves with the result of the request
+ * @returns {Promise<any>} resolves with the result of the first successful request
  */
 async function makeServerRequest(urls, serverCtor, requestFn, {quiet = false} = {}) {
     const errors = []
@@ -66,7 +67,8 @@ async function makeServerRequest(urls, serverCtor, requestFn, {quiet = false} = 
             rememberGoodUrl(urls, url)
             return result
         } catch (err) {
-            logger.debug(`Request to ${url} failed. Error: ${err.message}`)
+            //the host only: a provider key can sit in the url path
+            logger.debug(`Request to ${safeUrl(url) || 'invalid url'} failed. Error: ${err.message}`)
             errors.push(err)
         }
     }

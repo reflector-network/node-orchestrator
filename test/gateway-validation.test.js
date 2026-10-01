@@ -2,9 +2,10 @@
 const dns = require('dns')
 const http = require('http')
 //the real resolver refuses 127.0.0.1, where the stub gateways live, so only the address checks are stubbed out and
-//the transport behaviour can be exercised. validateRequestUrl stays real: the scheme check is part of what is tested.
+//the transport behaviour can be exercised. validateRequestUrl and the gateway rules stay real: the scheme checks are
+//part of what is tested.
 jest.mock('../utils/ssrf-validator', () => ({
-    validateRequestUrl: jest.requireActual('../utils/ssrf-validator').validateRequestUrl,
+    ...jest.requireActual('../utils/ssrf-validator'),
     resolveAndValidate: (urlString) => Promise.resolve({url: new URL(urlString), resolvedIp: '127.0.0.1'}),
     isPrivateIP: () => false
 }))
@@ -55,9 +56,10 @@ describe('validateGatewaysBody', () => {
         expect(() => validateGatewaysBody({urls: 'http://a'})).toThrow('urls must be an array')
     })
 
-    test('refuses more urls than the cap', () => {
-        const urls = new Array(21).fill(0).map((_, i) => `http://gateway-${i}.example.com`)
-        expect(() => validateGatewaysBody({urls})).toThrow('at most 20')
+    test('refuses more urls than the node cap', () => {
+        const urls = new Array(11).fill(0).map((_, i) => `https://gateway-${i}.example.com`)
+        expect(() => validateGatewaysBody({urls, validationKey: 'k1'})).toThrow('at most 10')
+        expect(validateGatewaysBody({urls: urls.slice(0, 10), validationKey: 'k1'}).urls).toHaveLength(10)
     })
 
     test('refuses non-string entries and a non-string validation key', () => {
@@ -73,9 +75,9 @@ describe('validateGatewaysBody', () => {
     })
 
     test('deduplicates while keeping the order', () => {
-        const body = {urls: ['http://b.example.com', 'http://a.example.com', 'http://b.example.com'], validationKey: 'k1'}
+        const body = {urls: ['https://b.example.com', 'https://a.example.com', 'https://b.example.com'], validationKey: 'k1'}
         const {urls} = validateGatewaysBody(body)
-        expect(urls).toEqual(['http://b.example.com', 'http://a.example.com'])
+        expect(urls).toEqual(['https://b.example.com', 'https://a.example.com'])
     })
 })
 
