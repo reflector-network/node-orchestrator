@@ -6,6 +6,7 @@ const ConfigManager = require('./domain/config-manager')
 const HandlersManager = require('./server/ws/handlers/handlers-manager')
 const Server = require('./server')
 const ConnectionManager = require('./domain/connections-manager')
+const {LogTokenProvider} = require('./domain/log-token-provider')
 const NodeSettingsManager = require('./domain/node-settings-manager')
 const EmailProvider = require('./domain/email-provider')
 const NotificationManager = require('./domain/notifications/notifications-manager')
@@ -27,6 +28,7 @@ try {
     container.configManager = new ConfigManager()
     container.handlersManager = new HandlersManager()
     container.connectionManager = new ConnectionManager()
+    container.logTokenProvider = new LogTokenProvider()
     container.nodeSettingsManager = new NodeSettingsManager()
     container.emailProvider = new EmailProvider(container.appConfig.emailSettings)
     container.notificationsManager = new NotificationManager()
@@ -34,8 +36,14 @@ try {
     container.statisticsManager = new StatisticsManager()
     container.server = new Server()
 
-    require('./app')(container)
+    //startup is asynchronous past this point, so its failures need the same exit path as the synchronous ones above:
+    //a rejected boot must stop the process, not leave it running half-initialised
+    require('./app')(container).catch(abort)
 } catch (e) {
+    abort(e)
+}
+
+function abort(e) {
     if (logger)
         logger.error(e)
     else

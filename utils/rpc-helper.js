@@ -8,12 +8,18 @@ const {makeServerRequest} = require('./request-helper')
  * @typedef {import('@reflector/reflector-shared').Config} Config
  */
 
+//an upstream that accepts the connection and never answers must count as a failure, so the next url is tried
+const rpcTimeout = 15000
+
 /**
  * @param {string} url - server URL
  * @returns {rpc.Server}
  */
 function getServer(url) {
-    return new rpc.Server(url, {allowHttp: true})
+    const server = new rpc.Server(url, {allowHttp: true})
+    //sdk 17.0.1 forwards only the headers from the constructor options; the deadline has to live on the http client
+    server.httpClient.defaults.timeout = rpcTimeout
+    return server
 }
 
 async function getUpdateTx(txHash, network) {
@@ -156,4 +162,4 @@ async function getContractEntries(contract, urls, keys) {
 }
 
 
-module.exports = {getUpdateTx, getAccountSequence, getSubscriptionEvents, loadSubscriptions, loadSubscription, loadTransaction}
+module.exports = {getUpdateTx, getAccountSequence, getSubscriptionEvents, loadSubscriptions, loadSubscription, loadTransaction, getServer}

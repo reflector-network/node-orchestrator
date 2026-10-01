@@ -35,6 +35,13 @@ class IncomingChannelBase extends ChannelBase {
     __lastMessageAt = 0
 
     /**
+     * Client address as connection-handler resolves it: the socket peer, or the address a trusted proxy forwards.
+     * Anonymous connections are capped per address on it; for node connections it is logged only.
+     * @type {string}
+     */
+    remoteAddress = null
+
+    /**
      * @param {number} staleThresholdMs - max age in ms for this channel to count as fresh
      * @returns {boolean}
      */

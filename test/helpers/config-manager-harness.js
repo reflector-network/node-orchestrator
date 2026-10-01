@@ -228,7 +228,6 @@ async function loadConfigManager({docs = [], nodeKps}) {
     const signatureNonces = new Map()
     const nonceProvider = {
         get: jest.fn(() => Promise.resolve(0)),
-        update: jest.fn(() => Promise.resolve()),
         tryConsume: jest.fn(() => Promise.resolve(true)),
         getSignatureNonce: jest.fn(pubkey => Promise.resolve(signatureNonces.get(pubkey) || 0)),
         updateSignatureNonce: jest.fn((pubkey, nonce) => {

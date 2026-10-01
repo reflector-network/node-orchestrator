@@ -1,6 +1,6 @@
 {
   "name": "@reflector/node-orchestrator",
-  "version": "0.12.94",
+  "version": "0.13.0-rc1",
   "description": "Orchestrator service for Reflector cluster nodes",
   "author": "team@stellar.expert",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
     "uuid": "11.1.0",
-    "ws": "8.18.2"
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@stellar-expert/eslint-config-js": "github:stellar-expert/eslint-config-js",

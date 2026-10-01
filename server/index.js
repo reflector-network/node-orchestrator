@@ -3,16 +3,13 @@ const express = require('express')
 const bodyParser = require('body-parser')
 const {WebSocketServer} = require('ws')
 const {ValidationError} = require('@reflector/reflector-shared')
-const {StrKey} = require('@stellar/stellar-sdk')
-const {createProxyMiddleware} = require('http-proxy-middleware')
 const logger = require('../logger')
 const container = require('../domain/container')
-const MessageTypes = require('./ws/handlers/message-types')
 const registerSwaggerRoute = require('./swagger')
 const {HttpError, badRequest} = require('./errors')
 const configRoutes = require('./routes/config-routes')
-const IncomingChannel = require('./ws/incoming-channel')
-const AnonIncomingChannel = require('./ws/anon-incoming-channel')
+const registerLokiProxy = require('./loki-proxy').registerLokiProxy
+const {handleConnection, isNodeUpgrade, nodeWsServerOptions, wsServerOptions} = require('./ws/connection-handler')
 const statisticsRoutes = require('./routes/statistics-routes')
 const logRoutes = require('./routes/log-routes')
 const settingsRoutes = require('./routes/node-settings-routes')
@@ -47,39 +44,14 @@ class Server {
         settingsRoutes(this.app)
         subscriptionRoutes(this.app)
 
-        if (container.appConfig.lokiUrl) {
-            const proxyMiddleware = createProxyMiddleware({
-                target: container.appConfig.lokiUrl,
-                changeOrigin: true
-            })
+        registerLokiProxy(this.app, container.appConfig.lokiUrl)
 
-            this.app.use('/loki-proxy', proxyMiddleware)
-        }
-
-        const wss = new WebSocketServer({noServer: true})
-
-        wss.on('connection', async function connection(ws, req) {
-            try {
-                const {pubkey, app} = req.headers
-                let connection = null
-                if (pubkey) {
-                    if (!StrKey.isValidEd25519PublicKey(pubkey))
-                        throw new ValidationError('pubkey is invalid')
-                    if (!container.configManager.hasNode(pubkey))
-                        throw new ValidationError('pubkey is not registered')
-                    connection = new IncomingChannel(ws, pubkey, app === 'node')
-                    await connection.send({type: MessageTypes.HANDSHAKE_REQUEST, data: {payload: connection.authPayload}})
-                } else {
-                    connection = new AnonIncomingChannel(ws, req.headers['x-forwarded-for'] || req.socket.remoteAddress)
-                }
-                container.connectionManager.add(connection)
-                logger.debug(`New connection from ${connection.ip || connection.pubkey} established`)
-            } catch (e) {
-                if (!(e instanceof ValidationError))
-                    logger.error(e)
-                ws.close(1008, e.message)
-            }
-        })
+        //two servers because ws fixes the frame cap per server: nodes answer with whole log files, anonymous clients
+        //only listen, so they keep the small cap
+        const wss = new WebSocketServer(wsServerOptions)
+        const nodeWss = new WebSocketServer(nodeWsServerOptions)
+        for (const wsServer of [wss, nodeWss])
+            wsServer.on('connection', (ws, req) => handleConnection(ws, req))
 
         //error handler
         this.app.use((err, req, res, next) => {
@@ -131,8 +103,9 @@ class Server {
 
         //Integrate WebSocket server with HTTP server
         this.server.on('upgrade', (request, socket, head) => {
-            wss.handleUpgrade(request, socket, head, (ws) => {
-                wss.emit('connection', ws, request)
+            const target = isNodeUpgrade(request) ? nodeWss : wss
+            target.handleUpgrade(request, socket, head, (ws) => {
+                target.emit('connection', ws, request)
             })
         })
     }

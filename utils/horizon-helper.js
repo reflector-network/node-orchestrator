@@ -4,12 +4,18 @@ const logger = require('../logger')
 const {makeServerRequest} = require('./request-helper')
 
 
+//an upstream that accepts the connection and never answers must count as a failure, so the next url is tried
+const horizonTimeout = 15000
+
 /**
  * @param {string} url - server URL
  * @returns {Horizon.Server}
  */
 function getServer(url) {
-    return new Horizon.Server(url, {allowHttp: true})
+    const server = new Horizon.Server(url, {allowHttp: true})
+    //sdk 17.0.1 forwards only the headers from the constructor options; the deadline has to live on the http client
+    server.httpClient.defaults.timeout = horizonTimeout
+    return server
 }
 
 /**
@@ -170,5 +176,6 @@ async function getLedgerCloseTime(urls, ledgerSequence) {
 
 module.exports = {
     getLastTransactionsForAccount,
-    getLastTransactions
+    getLastTransactions,
+    getServer
 }

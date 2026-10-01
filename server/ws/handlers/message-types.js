@@ -15,6 +15,7 @@ const MessageTypes = {
     LOG_FILE_REQUEST: 24,
     GATEWAYS_GET: 25,
     GATEWAYS_POST: 26,
+    LOG_TOKEN: 27,
     OK: 200
 }
 

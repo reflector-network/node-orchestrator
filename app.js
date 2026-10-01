@@ -1,4 +1,5 @@
 const logger = require('./logger')
+const nonceProvider = require('./domain/nonce-provider')
 const {connect, disconnect} = require('./persistence-layer/index')
 
 /**
@@ -12,6 +13,11 @@ const {connect, disconnect} = require('./persistence-layer/index')
 async function init(container) {
 
     await connect(container.appConfig.dbConnectionString)
+
+    //replay protection is only atomic while the unique index exists, and a silent index-build failure would disable it
+    //without a trace, so the index is built here, then checked, and the service refuses to come up rather than serving
+    //requests it cannot protect
+    await nonceProvider.init()
 
     await container.configManager.init(container.appConfig.defaultNodes)
 

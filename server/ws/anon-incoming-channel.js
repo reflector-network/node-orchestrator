@@ -7,7 +7,7 @@ const IncomingChannelBase = require('./incoming-channel-base')
 class AnonIncomingChannel extends IncomingChannelBase {
     /**
      * @param {WebSocket.WebSocket} ws - ws instance
-     * @param {string} ip - the ip of the client
+     * @param {string} ip - client address as connection-handler resolves it, never the raw x-forwarded-for header
      */
     constructor(ws, ip) {
         super(ws, null)
