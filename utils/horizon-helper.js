@@ -1,4 +1,4 @@
-const {Horizon, xdr} = require('@stellar/stellar-sdk')
+const {Horizon, xdr, NotFoundError} = require('@stellar/stellar-sdk')
 const container = require('../domain/container')
 const logger = require('../logger')
 const {makeServerRequest} = require('./request-helper')
@@ -93,8 +93,11 @@ async function getLastTransactions(urls, lastLedger = 0) {
         lastLedger = (await getLastLedger(urls)) - 100 //add some buffer
     }
 
+    //the cursor the attempt starts from; a retry against the next url must not inherit a partly advanced cursor
+    const startLedger = lastLedger
+
     /**
-     * @param {Horizon.Server} server
+     * @param {Horizon.Server} server - horizon server
      * @returns {Promise<{txs: any[], lastLedger: number}>}
      */
     const transactionsRequestFn = async (server) => {
@@ -102,16 +105,19 @@ async function getLastTransactions(urls, lastLedger = 0) {
         const txs = []
         const limit = 200
         let maxLedgerReached = false
+        let cursor = startLedger
         while (txs.length < maxTotalTxs && !maxLedgerReached) {
             //build the initial request
             let txsRequest = () => server.transactions()
-                .forLedger(lastLedger + 1)
+                .forLedger(cursor + 1)
                 .limit(limit)
                 .order('asc')
                 .call()
                 .catch(err => {
-                    if (err?.response?.status === 404) {
-                        //logger.trace({err, msg: `Ledger ${lastLedger} not found, assuming max ledger reached`})
+                    //the head of the chain: the sdk raises NotFoundError for an http 404 before it looks at the body, so
+                    //a proxy's bare or non-json 404 counts as well as horizon's problem document. err.response is only
+                    //that body, so its status field would miss both
+                    if (err instanceof NotFoundError) {
                         maxLedgerReached = true
                         return null
                     }
@@ -137,16 +143,16 @@ async function getLastTransactions(urls, lastLedger = 0) {
                 }
             }
             if (!maxLedgerReached)
-                lastLedger++
+                cursor++
         }
-        return {txs, lastLedger}
+        return {txs, lastLedger: cursor}
     }
 
     try {
         return await makeServerRequest(urls, getServer, transactionsRequestFn)
     } catch (err) {
         logger.error({err, msg: `Error fetching transactions`})
-        return {txs: [], lastLedger}
+        return {txs: [], lastLedger: startLedger} //nothing was processed, so the cursor stays put
     }
 }
 

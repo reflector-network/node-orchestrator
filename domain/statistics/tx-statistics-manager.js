@@ -1,5 +1,5 @@
 const {scValToNative, xdr, Address} = require('@stellar/stellar-sdk')
-const {getContractInstanceEntries, mapToPlainObject, normalizeTimestamp} = require('@reflector/reflector-shared')
+const {getContractInstanceEntries, mapToPlainObject, normalizeTimestamp, ContractTypes} = require('@reflector/reflector-shared')
 const logger = require('../../logger')
 const container = require('../container')
 const {getLastTransactions} = require('../../utils/horizon-helper')
@@ -41,7 +41,7 @@ const maxItemsToStore = 256
  */
 function getParser(type) {
     switch (type) {
-        case "dao":
+        case ContractTypes.DAO:
             return {
                 fns: {
                     "create_ballot": (context) => {
@@ -69,8 +69,8 @@ function getParser(type) {
                     }
                 }
             }
-        case "oracle":
-        case "oracle_beam":
+        case ContractTypes.ORACLE:
+        case ContractTypes.ORACLE_BEAM:
             return {
                 fns: {"set_price": (context) => {
                     function restorePricesFromUpdate(update) {
@@ -138,10 +138,12 @@ function getParser(type) {
                     }
                 }}
             }
-        case "subscription":
+        case ContractTypes.SUBSCRIPTIONS:
             return {
                 fns: {"trigger": (context) => {
-                    context.state.updates[context.source.args[0]] = {tx: context.source.txHash}
+                    //through addUpdate, so the rounds are capped like an oracle's and each is found by its hash: a
+                    //contract with events triggers once a minute, and every contract shares one statistics document
+                    context.state.addUpdate(String(context.source.args[0]), {tx: context.source.txHash})
                     return true
                 }} //use trigger timestamp as the update timestamp for subscriptions
             }
@@ -193,22 +195,150 @@ function buildOracleTimeline(updates, activeTtls, currentTime, timeframe, heartb
     return timeline
 }
 
-function buildSubscriptionTimeline(updates, now, data) {
+/**
+ * Build the timeline of a subscriptions contract from the trigger rounds that were actually recorded. The previous
+ * signature took the `getStatistics` extra-data object as a third argument and iterated it, which threw.
+ * @param {Object<string, {tx: string, signers: string[]}>} updates - recorded trigger rounds by timestamp
+ * @param {number} now - current time in milliseconds
+ * @returns {Object<number, any>}
+ */
+function buildSubscriptionTimeline(updates, now) {
     const timeline = {}
-    for (const triggerTimestamps of data) {
-        const ts = Number(triggerTimestamps)
+    const timestamps = Object.keys(updates)
+        .map(Number)
+        .filter(ts => Number.isFinite(ts))
+        .sort((a, b) => b - a)
+        .slice(0, maxItemsToStore)
+    for (const ts of timestamps) {
         if (updates[ts]?.tx !== undefined) {
             timeline[ts] = {tx: updates[ts].tx, signers: updates[ts].signers || []}
             continue
         }
-
-        if (now - ts < gracePeriod) {
-            timeline[ts] = STATUS.PENDING
-            continue
-        }
-        timeline[ts] = STATUS.MISSING
+        timeline[ts] = now - ts < gracePeriod ? STATUS.PENDING : STATUS.MISSING
     }
     return timeline
+}
+
+/**
+ * Returns the transaction of an envelope, unwrapping a fee bump. Horizon reports a fee-bump transaction as a single
+ * record carrying the fee-bump envelope, so skipping records with `inner_transaction` skipped the invocation entirely.
+ * Under js-xdr 5 a union exposes `.type` and `.value`, not `.switch()`.
+ * @param {xdr.TransactionEnvelope} envelope - parsed transaction envelope
+ * @returns {any} the v0/v1 transaction that carries the operations
+ */
+function getInnerTransaction(envelope) {
+    if (envelope.type === 'envelopeTypeTxFeeBump')
+        return envelope.value.tx.innerTx.value.tx
+    return envelope.value.tx
+}
+
+/**
+ * Returns the operation results of a transaction result, unwrapping a fee bump
+ * @param {xdr.TransactionResult} result - parsed transaction result
+ * @returns {any[]} operation results, empty when the transaction ran no operations
+ */
+function getOperationResults(result) {
+    let inner = result.result
+    if (inner.type === 'txFeeBumpInnerSuccess' || inner.type === 'txFeeBumpInnerFailed')
+        inner = inner.value.result.result
+    return Array.isArray(inner.value) ? inner.value : []
+}
+
+/**
+ * BSON encodes a bigint as int64 and silently wraps anything at or above 2^63, which prices exceed at 14 decimals, so
+ * every bigint is persisted as a decimal string.
+ * @param {any} value - value about to be written to MongoDB
+ * @returns {any}
+ */
+function toStorable(value) {
+    if (typeof value === 'bigint')
+        return value.toString()
+    if (Array.isArray(value))
+        return value.map(toStorable)
+    if (value && typeof value === 'object') {
+        const result = {}
+        for (const [key, item] of Object.entries(value))
+            result[key] = toStorable(item)
+        return result
+    }
+    return value
+}
+
+/**
+ * @param {any} value - decimal string, number or bigint read back from MongoDB
+ * @returns {bigint} 0n when the value cannot be parsed
+ */
+function toBigInt(value) {
+    if (typeof value === 'bigint')
+        return value
+    try {
+        return BigInt(value)
+    } catch (e) {
+        return 0n
+    }
+}
+
+/**
+ * @param {any} update - one persisted round
+ * @returns {any} the same round with its price vector back in bigints
+ */
+function parseStoredUpdate(update) {
+    if (!update || typeof update !== 'object' || !Array.isArray(update.prices))
+        return update
+    return {...update, prices: update.prices.map(toBigInt)}
+}
+
+/**
+ * @param {any} entries - persisted contract entries
+ * @returns {any} the same entries with the expiration ranges back in bigints
+ */
+function parseStoredEntries(entries) {
+    if (!entries || !Array.isArray(entries.expiration))
+        return entries || {}
+    return {
+        ...entries,
+        expiration: entries.expiration
+            .filter(range => Array.isArray(range) && range.length === 2)
+            .map(([from, to]) => [toBigInt(from), toBigInt(to)])
+    }
+}
+
+/**
+ * The stored snapshot was read but its content cannot be loaded. By the time this is thrown the document is already
+ * in memory and interpreting it does no i/o, so every later read of the same snapshot fails the same way
+ */
+class MalformedSnapshotError extends Error {
+    /**
+     * @param {Error} cause - what failed while the snapshot was interpreted
+     */
+    constructor(cause) {
+        super(`Contract statistics snapshot is malformed: ${cause?.message}`, {cause})
+        this.name = 'MalformedSnapshotError'
+    }
+}
+
+/**
+ * @param {any} value - value to check
+ * @returns {boolean} true for an object that is neither null nor an array
+ */
+function isObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * @param {any} value - value to check
+ * @returns {boolean} true when the value is absent or an object
+ */
+function isOptionalObject(value) {
+    return value === undefined || value === null || isObject(value)
+}
+
+/**
+ * @param {any} err - error thrown by a MongoDB command
+ * @returns {boolean} true when the command's source collection does not exist
+ */
+function isNamespaceNotFound(err) {
+    return err?.code === 26 || err?.codeName === 'NamespaceNotFound'
 }
 
 class StatisticsData {
@@ -278,6 +408,18 @@ class TxStatisticsManager {
      */
     __contractsState = null
 
+    /**
+     * @type {boolean} true once the persisted snapshot has been dealt with: loaded, absent, or found malformed and
+     * replaced by a fresh state
+     */
+    __stateLoaded = false
+
+    /**
+     * @type {MalformedSnapshotError|null} set while a malformed snapshot is still under its original name because
+     * moving it aside failed; nothing is persisted over it until the move succeeds
+     */
+    __malformedSnapshot = null
+
     constructor() {
         try {
             this.__transactionsWorker()
@@ -304,18 +446,18 @@ class TxStatisticsManager {
             }
             let data = null
             switch (state.type) {
-                case "oracle":
-                case "oracle_beam":
+                case ContractTypes.ORACLE:
+                case ContractTypes.ORACLE_BEAM:
                     data = buildOracleTimeline(
                         state.updates,
                         state.entries.expiration,
                         now,
                         contract.timeframe,
-                        state.type === 'oracle_beam' ? extraData.priceHeartbeat : undefined,
+                        state.type === ContractTypes.ORACLE_BEAM ? extraData.priceHeartbeat : undefined,
                         300)
                     break
-                case "subscription":
-                    data = buildSubscriptionTimeline(state.updates, now, extraData)
+                case ContractTypes.SUBSCRIPTIONS:
+                    data = buildSubscriptionTimeline(state.updates, now)
                     break
                 default:
                     logger.warn(`Unknown contract type ${state.type} for contract ${contract.contractId}. Skipping transaction data.`)
@@ -417,23 +559,65 @@ class TxStatisticsManager {
 
     __changeThreshold = 200
 
+    /**
+     * Loads the persisted snapshot into the current state. A read that rejects propagates unchanged: it says nothing
+     * about the content (a lost connection, missing permissions, a lock), so the caller retries it. Anything that fails
+     * once the document is in hand is thrown as MalformedSnapshotError, because it would fail the same way on every read
+     *
+     */
     async __loadContractStatistics() {
         const doc = await StatisticsModel.findOne().exec()
-        if (doc) {
-            const normalizedData = doc.toPlainObject()
-            for (const [contractId, stats] of Object.entries(normalizedData.data.clusterStatistics)) {
+        if (!doc)
+            return
+        try {
+            const {data} = doc.toPlainObject()
+            if (!isObject(data) || !isObject(data.clusterStatistics))
+                throw new Error('the snapshot holds no clusterStatistics object')
+            //the cursor is incremented and compared as a number: a string would concatenate and a bigint would throw
+            if (!Number.isSafeInteger(data.lastLedger))
+                throw new Error(`lastLedger is not an integer: ${typeof data.lastLedger} ${String(data.lastLedger)}`)
+            for (const [contractId, stats] of Object.entries(data.clusterStatistics)) {
                 const contractState = this.__contractsState.clusterStatistics.get(contractId)
                 if (!contractState) {
                     logger.trace(`Loading statistics from db. ${contractId} is not part of the current config. Skipping.`)
                     continue
                 }
+                if (!isObject(stats) || !isOptionalObject(stats.updates) || !isOptionalObject(stats.entries))
+                    throw new Error(`the statistics of ${contractId} are not an object of updates and entries`)
                 for (const [key, value] of Object.entries(stats.updates || {})) {
-                    contractState.addUpdate(key, value)
+                    contractState.addUpdate(key, parseStoredUpdate(value))
                 }
-                contractState.entries = stats.entries || {}
+                contractState.entries = parseStoredEntries(stats.entries)
             }
-            this.__contractsState.lastLedger = normalizedData.data.lastLedger
+            this.__contractsState.lastLedger = data.lastLedger
+        } catch (err) {
+            throw new MalformedSnapshotError(err)
         }
+    }
+
+    /**
+     * Moves the malformed snapshot aside under a timestamped collection name next to the original, where it stays for
+     * inspection, and clears `__malformedSnapshot` once nothing is left under the original name. Never throws: while the
+     * move fails, statistics keep updating from the fresh state without being persisted, and the next tick retries the
+     * move under that tick's name
+     */
+    async __quarantineSnapshot() {
+        const {collection} = StatisticsModel
+        const target = `${collection.collectionName}_quarantined_${new Date(Date.now()).toISOString().replace(/[-:.]/g, '')}`
+        const location = [StatisticsModel.db?.name, target].filter(Boolean).join('.')
+        try {
+            await collection.rename(target)
+            logger.error({err: this.__malformedSnapshot, msg: `Contract statistics snapshot is malformed; moved it aside to ${location} and started fresh`})
+        } catch (err) {
+            if (!isNamespaceNotFound(err)) {
+                logger.error({err, msg: `Contract statistics snapshot is malformed and could not be moved aside to ${location}; statistics continue from a fresh state, unpersisted, and the move is retried on the next tick`})
+                return
+            }
+            //nothing is left under the original name (an earlier move whose reply was lost, or a removal by hand), so the
+            //fresh state overwrites nothing
+            logger.warn({err: this.__malformedSnapshot, msg: 'The malformed contract statistics snapshot is no longer in place; persisting the fresh state'})
+        }
+        this.__malformedSnapshot = null
     }
 
     /**
@@ -452,17 +636,35 @@ class TxStatisticsManager {
                 contractState.account = contractData.admin //update account if it was changed
             }
         }
-        const isInitialized = this.__contractsState === null
-            ? !(this.__contractsState = {lastLedger: 0, clusterStatistics: new Map()})
-            : true
-        for (const contract of config.contracts.values())
-            ensureContractSetup(contract)
-        //system account
-        ensureContractSetup({contractId: 'system', admin: config.systemAccount, type: 'system'})
-        if (isInitialized)
+        const ensureContractsSetup = () => {
+            if (this.__contractsState === null)
+                this.__contractsState = {lastLedger: 0, clusterStatistics: new Map()}
+            for (const contract of config.contracts.values())
+                ensureContractSetup(contract)
+            //system account
+            ensureContractSetup({contractId: 'system', admin: config.systemAccount, type: 'system'})
+        }
+        ensureContractsSetup()
+        if (this.__stateLoaded) {
+            if (this.__malformedSnapshot)
+                await this.__quarantineSnapshot()
             return
-        //load persisted statistics
-        await this.__loadContractStatistics()
+        }
+        try {
+            await this.__loadContractStatistics()
+        } catch (err) {
+            //a snapshot that could not be read this time propagates: the flag stays down, the next tick reads it again,
+            //and nothing is persisted over it meanwhile
+            if (!(err instanceof MalformedSnapshotError))
+                throw err
+            //the content itself cannot be loaded and never will be, so the snapshot is moved aside and statistics start
+            //over; whatever the load applied before it failed goes with the old state
+            this.__contractsState = null
+            ensureContractsSetup()
+            this.__malformedSnapshot = err
+            await this.__quarantineSnapshot()
+        }
+        this.__stateLoaded = true
     }
 
 
@@ -519,14 +721,16 @@ class TxStatisticsManager {
             )
             logger.debug(`Fetched ${txs.length} transactions from horizon.`)
             for (const tx of txs) {
+                //a failed transaction landed no round; horizon leaves them out unless include_failed is requested, and
+                //this keeps them out whatever the request asks for. The flag is required in the sdk's TransactionRecord
+                if (tx.successful !== true)
+                    continue
                 try {
-                    if (tx.inner_transaction) {
-                        continue //skip inner transactions, they will be processed with their parent transaction
-                    }
-                    const isHostFnTx = xdr.TransactionResult.fromXdr(tx.result_xdr, 'base64').result.value.some(r => r.value.type === 'invokeHostFunction')
+                    const operationResults = getOperationResults(xdr.TransactionResult.fromXdr(tx.result_xdr, 'base64'))
+                    const isHostFnTx = operationResults.some(r => r.value && r.value.type === 'invokeHostFunction')
                     if (isHostFnTx) {
                         const envelope = xdr.TransactionEnvelope.fromXdr(tx.envelope_xdr, 'base64')
-                        const operations = envelope.value.tx.operations
+                        const operations = getInnerTransaction(envelope).operations
                         for (let i = 0; i < operations.length; i++) {
                             const hostFunction = operations[i].body.value.hostFunction
                             if (hostFunction.type !== 'hostFunctionTypeInvokeContract')
@@ -541,7 +745,7 @@ class TxStatisticsManager {
                             if (!parser)
                                 continue
                             let before
-                            if (fnName === 'set_price' && state.type !== 'subscription' && args.length >= 2) {
+                            if (fnName === 'set_price' && state.type !== ContractTypes.SUBSCRIPTIONS && args.length >= 2) {
                                 before = state.updates[args[1].toString()]
                             }
                             parser({
@@ -551,7 +755,7 @@ class TxStatisticsManager {
                                 ledger: tx.ledger_attr,
                                 state
                             })
-                            if (fnName === 'set_price' && state.type !== 'subscription' && args.length >= 2) {
+                            if (fnName === 'set_price' && state.type !== ContractTypes.SUBSCRIPTIONS && args.length >= 2) {
                                 const tsKey = args[1].toString()
                                 if (state.updates[tsKey] && state.updates[tsKey] !== before)
                                     this.__detectPriceSpike(contractId, tsKey)
@@ -586,16 +790,23 @@ class TxStatisticsManager {
 
             await Promise.all([this.__updateEntries(config, urls), this.__updateTransactions(config, horizonUrls)])
 
-            const rawData = {
+            const rawData = toStorable({
                 lastLedger: this.__contractsState.lastLedger,
                 clusterStatistics: mapToPlainObject(this.__contractsState.clusterStatistics)
-            }
-            //persist statistics
-            StatisticsModel.findOneAndUpdate({}, {
-                data: rawData
-            }, {upsert: true}).exec().catch(err => {
-                logger.error(`Error saving contract statistics: ${err.message}`)
             })
+            //nothing is written over a snapshot that has not been read, or over a malformed one that is still in place
+            //because moving it aside failed; the round itself goes on. A failed read already throws out of
+            //__ensureState above, so the first condition is defence in depth
+            if (this.__stateLoaded && !this.__malformedSnapshot) {
+                //persist statistics
+                StatisticsModel.findOneAndUpdate({}, {
+                    data: rawData
+                }, {upsert: true}).exec().catch(err => {
+                    logger.error(`Error saving contract statistics: ${err.message}`)
+                })
+            } else {
+                logger.warn('Contract statistics snapshot is not settled yet; skipping persistence for this tick')
+            }
             try {
                 await container.notificationsManager.flush()
             } catch (e) {
@@ -613,3 +824,4 @@ class TxStatisticsManager {
 
 module.exports = TxStatisticsManager
 module.exports.StatisticsData = StatisticsData
+module.exports.toStorable = toStorable
