@@ -100,7 +100,7 @@ describe('the url that answered last is tried first', () => {
 })
 
 describe('a failed request fails as it did before the preference', () => {
-    test('with a preference in place every url is still tried', async () => {
+    test('with a preference in place every url is still tried, and the failures travel as the cause', async () => {
         const urls = ['http://one-g', 'http://two-g', 'http://three-g']
         mockRpc.failing.add('http://one-g')
         await call(urls)
@@ -110,6 +110,7 @@ describe('a failed request fails as it did before the preference', () => {
         const error = await call(urls).catch(e => e)
 
         expect(error.message).toBe('Failed to make request. See logs for details.')
+        expect(error.cause).toHaveLength(3)
         expect(mockRpc.requests).toEqual(['http://two-g', 'http://one-g', 'http://three-g'])
     })
 

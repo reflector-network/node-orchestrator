@@ -1,4 +1,4 @@
-const {rpc, xdr, scValToNative} = require('@stellar/stellar-sdk')
+const {rpc} = require('@stellar/stellar-sdk')
 const {getSubscriptionsContractState, getSubscriptions, getSubscriptionById} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('../domain/container')
@@ -44,29 +44,78 @@ async function getAccountSequence(currentConfig) {
 }
 
 /**
+ * The ledger events were requested from is older than any the RPC still holds events for. Reading on from it can never
+ * succeed, so the caller has to rebuild its state from the chain instead
+ */
+class EventsOutOfRangeError extends Error {
+    /**
+     * @param {number} startLedger - ledger the events were requested from
+     * @param {number} oldestLedger - oldest ledger the RPC holds events for
+     */
+    constructor(startLedger, oldestLedger) {
+        super(`Ledger ${startLedger} is outside the event retention of the RPC (oldest ledger ${oldestLedger})`)
+        this.name = 'EventsOutOfRangeError'
+        this.startLedger = startLedger
+        this.oldestLedger = oldestLedger
+    }
+}
+
+/**
+ * @param {string[]} urls - soroban rpc urls
+ * @returns {Promise<number>} the latest ledger the RPC has closed
+ */
+async function getLatestLedgerSequence(urls) {
+    return (await makeServerRequest(urls, getServer, async (server) => await server.getLatestLedger())).sequence
+}
+
+/**
  * @param {string} contractId - contract id
  * @param {number} lastProcessedLedger - last processed ledger
  * @param {string[]} urls - soroban rpc urls
  * @returns {Promise<{events: any[], lastLedger: number}>}
+ * @throws {EventsOutOfRangeError} when lastProcessedLedger is older than the oldest ledger the RPC holds events for
  */
 async function getSubscriptionEvents(contractId, lastProcessedLedger, urls) {
     const limit = 100
-    const lastLedger = (await makeServerRequest(urls, getServer, async (server) => await server.getLatestLedger())).sequence
+    const filters = [{type: 'contract', contractIds: [contractId]}]
+    const lastLedger = await getLatestLedgerSequence(urls)
     const startLedger = lastProcessedLedger ? lastProcessedLedger : lastLedger - 180 //180 is 15 minutes in ledgers
-    const loadEvents = async (startLedger, cursor) => {
+    const loadEvents = async (startLedger, cursor, quiet = false) => {
         const d = await makeServerRequest(urls, getServer, async (server) => {
             startLedger = cursor ? undefined : startLedger
-            const data = await server.getEvents({filters: [{type: 'contract', contractIds: [contractId]}], startLedger, limit, cursor})
+            const data = await server.getEvents({filters, startLedger, limit, cursor})
             return data
-        })
+        }, {quiet})
         return d
+    }
+    //the first page is read from the stored cursor. After an outage longer than the RPC keeps events, that ledger is
+    //gone and every read from it is refused, so the refusal is told apart from a transient failure by asking the RPC
+    //for the oldest ledger it holds - read from a request that starts at the latest ledger, which is always in range.
+    //reflector-node makes the same comparison before every read; here it costs a request only once a read has failed
+    const loadFirstPage = async () => {
+        try {
+            //quiet: after a long outage this read is refused by design and the refusal triggers a reload, so its errors
+            //are logged below only once they are known to be something else
+            return await loadEvents(startLedger, null, true)
+        } catch (err) {
+            if (lastProcessedLedger) {
+                const oldestLedger = await makeServerRequest(urls, getServer,
+                    async (server) => (await server.getEvents({filters, startLedger: lastLedger, limit: 1})).oldestLedger)
+                    .catch(() => null)
+                if (oldestLedger > lastProcessedLedger)
+                    throw new EventsOutOfRangeError(lastProcessedLedger, oldestLedger)
+            }
+            for (const cause of err.cause || [])
+                logger.error(cause)
+            throw err
+        }
     }
     let events = []
     let hasMore = true
     let latestLedger = null
     let pagingToken = null
     while (hasMore) {
-        const eventsResponse = (await loadEvents(startLedger, pagingToken))
+        const eventsResponse = pagingToken ? await loadEvents(startLedger, pagingToken) : await loadFirstPage()
         if (eventsResponse.events.length < limit)
             hasMore = false
         latestLedger = eventsResponse.latestLedger
@@ -115,51 +164,14 @@ async function loadTransaction(txHash, urls) {
     }
 }
 
-/**
- * Returns contract instance
- * @param {string} contractId - contract id
- * @param {string[]} urls - soroban rpc urls
- * @returns {xdr.ScContractInstance|null}
- */
-async function getContractInstance(contractId, urls) {
-    const key = xdr.ScVal.scvLedgerKeyContractInstance()
-    const contractDataRequestFn = async (server) => await server.getContractData(contractId, key, rpc.Durability.Persistent)
-    const contractData = await makeServerRequest(contractDataRequestFn, urls)
-    if (!contractData)
-        return null
-    return contractData.val.contractData.val.instance
+module.exports = {
+    getUpdateTx,
+    getAccountSequence,
+    getSubscriptionEvents,
+    getLatestLedgerSequence,
+    loadSubscriptions,
+    loadSubscription,
+    loadTransaction,
+    getServer,
+    EventsOutOfRangeError
 }
-
-/**
- * Returns native storage
- * @param {xdr.ScMapEntry[]} values - values
- * @param {string[]} keys - props to extract
- * @returns {object}
- */
-function getNativeStorage(values, keys) {
-    const storage = {}
-    if (values && keys.length > 0)
-        for (const value of values) {
-            const key = scValToNative(value.key)
-            const keyIndex = keys.indexOf(key)
-            if (keyIndex < 0)
-                continue
-            const val = scValToNative(value.val)
-            storage[key] = val
-            //remove found key
-            keys.splice(keyIndex, 1)
-            if (keys.length < 1)
-                break //all keys found
-        }
-    return storage
-}
-
-async function getContractEntries(contract, urls, keys) {
-    const instance = await getContractInstance(contract, urls)
-    if (!instance)
-        return {}
-    return getNativeStorage(instance.storage, keys)
-}
-
-
-module.exports = {getUpdateTx, getAccountSequence, getSubscriptionEvents, loadSubscriptions, loadSubscription, loadTransaction, getServer}

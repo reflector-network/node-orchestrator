@@ -53,9 +53,11 @@ function rememberGoodUrl(urls, url) {
  * @param {string[]} urls - list of server URLs
  * @param {(serverUrl: string) => any} serverCtor - function to create a server instance
  * @param {(server: any) => Promise<any>} requestFn - function to make a request using the server instance
+ * @param {{quiet: boolean}} [options] - quiet: the caller expects a refusal and logs the errors itself once it knows
+ * what the failure was; they are logged at debug here and always travel as the thrown error's cause
  * @returns {Promise<any>} - resolves with the result of the request
  */
-async function makeServerRequest(urls, serverCtor, requestFn) {
+async function makeServerRequest(urls, serverCtor, requestFn, {quiet = false} = {}) {
     const errors = []
     for (const url of orderByLastGood(urls)) {
         try {
@@ -68,9 +70,10 @@ async function makeServerRequest(urls, serverCtor, requestFn) {
             errors.push(err)
         }
     }
-    for (const err of errors)
-        logger.error(err)
-    throw new Error('Failed to make request. See logs for details.')
+    if (!quiet)
+        for (const err of errors)
+            logger.error(err)
+    throw new Error('Failed to make request. See logs for details.', {cause: errors})
 }
 
 module.exports = {

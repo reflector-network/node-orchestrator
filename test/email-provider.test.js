@@ -144,6 +144,22 @@ describe('EmailProvider.sendToAll and the monitoring key', () => {
         expect(sentRecipients()).toEqual([['ops@x.com', ...emails.slice(0, 199)]])
     })
 
+    test('a monitoring key that is also a node has its settings read once', async () => {
+        addNode('GMONITOR', ['ops@x.com'])
+        addNode('GA', ['a@x.com'])
+        mockContainer.appConfig.monitoringKey = 'GMONITOR'
+        const get = jest.spyOn(mockSettings, 'get')
+
+        try {
+            await provider.sendToAll('Cluster issues', 'body')
+            //the pubkey list is de-duplicated before any address is looked up, not left to send() to repair
+            expect(get.mock.calls).toEqual([['GMONITOR'], ['GA']])
+        } finally {
+            get.mockRestore()
+        }
+        expect(sentRecipients()).toEqual([['ops@x.com', 'a@x.com']])
+    })
+
     test('a monitoring key without stored addresses changes nothing', async () => {
         addNode('GA', ['a@x.com'])
         mockContainer.appConfig.monitoringKey = 'GMONITOR'
