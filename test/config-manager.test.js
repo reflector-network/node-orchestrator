@@ -32,13 +32,13 @@ test('creating config', async () => {
     const {nodeKps, config} = constants
 
     let signedEnvelope = getSignedEnvelope(config, nodeKps[0])
-    await configManager.create(signedEnvelope)
+    await configManager.create(signedEnvelope, signedEnvelope.signatures[0].pubkey)
 
     expect(configManager.getCurrentConfigs().pendingConfig.config.status).toBe('voting')
 
     signedEnvelope = getSignedEnvelope(config, nodeKps[1])
 
-    await configManager.create(signedEnvelope)
+    await configManager.create(signedEnvelope, signedEnvelope.signatures[0].pubkey)
 
     const configs = configManager.getCurrentConfigs()
 
@@ -54,16 +54,18 @@ test('pending config (period update)', async () => {
     const newConfig = {...config}
     newConfig.contracts.CAA2NN3TSWQFI6TZVLYM7B46RXBINZFRXZFP44BM2H6OHOPRXD5OASUW.period = 9999999
     const signedEnvelope = getSignedEnvelope(newConfig, nodeKps[0])
-    await configManager.create(signedEnvelope)
+    await configManager.create(signedEnvelope, signedEnvelope.signatures[0].pubkey)
 
     const pendingConfig = configManager.getCurrentConfigs().pendingConfig
     expect(pendingConfig.config.config.contracts.CAA2NN3TSWQFI6TZVLYM7B46RXBINZFRXZFP44BM2H6OHOPRXD5OASUW.period).toBe(9999999)
 
 }, 3000000)
 
+let nonceCounter = Date.now()
+
 function getSignedEnvelope(config, kp, rejected = false) {
     const pubkey = kp.publicKey()
-    const nonce = Date.now()
+    const nonce = ++nonceCounter
     const payload = {...config, nonce}
     if (rejected)
         payload.rejected = true

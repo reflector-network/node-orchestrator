@@ -103,8 +103,8 @@ function configRoutes(app) {
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', {method: 'post'}, async (req, res) => {
-        await container.configManager.create(req.body)
+    registerRoute(app, 'config', {method: 'post'}, async (req) => {
+        await container.configManager.create(req.body, req.pubkey)
         return {ok: 1}
     })
 

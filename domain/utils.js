@@ -23,8 +23,21 @@ function isDebugging() {
     return isDebug
 }
 
+/**
+ * Nodes verify every signature against the payload hash without the rejected flag, so rejected votes
+ * must not travel to them.
+ * @param {{signatures: {rejected: boolean}[]}} rawEnvelope - plain envelope
+ * @returns {object} shallow copy with rejected signatures removed; falsy input is returned as is
+ */
+function stripRejectedSignatures(rawEnvelope) {
+    if (!rawEnvelope)
+        return rawEnvelope
+    return {...rawEnvelope, signatures: rawEnvelope.signatures.filter(signature => !signature.rejected)}
+}
+
 module.exports = {
     isDebugging,
     computeUpdateStatus,
-    mailRegex
+    mailRegex,
+    stripRejectedSignatures
 }
