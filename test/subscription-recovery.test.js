@@ -495,3 +495,24 @@ describe('makeServerRequest keeps logging at error for callers that expect no re
         expect(logger.debug).toHaveBeenCalledWith('Request to http://a.example failed. Error: refused by http://a.example')
     })
 })
+
+describe('a failed first page read whose cause is not a list', () => {
+    test('logs the single cause and rethrows the read error itself, not a TypeError', async () => {
+        const underlying = {code: -32603, message: 'internal error'} //an RPC refusal is a plain object, not iterable
+        const refusal = new Error('Failed to make request. See logs for details.', {cause: underlying})
+        let getSubscriptionEvents
+        let isolatedLogger
+        jest.isolateModules(() => {
+            jest.doMock('../utils/request-helper', () => ({
+                //the latest-ledger read answers; the quiet first page read is refused
+                makeServerRequest: jest.fn((urls, ctor, requestFn, {quiet} = {}) =>
+                    (quiet ? Promise.reject(refusal) : Promise.resolve({sequence: 5000})))
+            }))
+            ;({getSubscriptionEvents} = require('../utils/rpc-helper'))
+            isolatedLogger = require('../logger')
+        })
+
+        await expect(getSubscriptionEvents('CSUB', 0, ['http://rpc.example.com'])).rejects.toBe(refusal)
+        expect(isolatedLogger.error.mock.calls).toEqual([[underlying]])
+    })
+})

@@ -91,7 +91,7 @@ function rejectedSignature(kp) {
  */
 function makeDoc({
     id, config, signatures, status, timestamp = 0, expirationDate = FAR_FUTURE, isBlockchainUpdate = false,
-    updatedAt = Date.now(), txHash = null, hasMoreTxns = false
+    updatedAt = Date.now(), txHash = null, hasMoreTxns = false, allowEarlySubmission = false
 }) {
     return {
         id,
@@ -105,7 +105,7 @@ function makeDoc({
         txHash,
         hasMoreTxns,
         isBlockchainUpdate,
-        allowEarlySubmission: false,
+        allowEarlySubmission,
         updatedAt
     }
 }
@@ -216,12 +216,15 @@ function createModelMock(seedDocs = []) {
 
 /**
  * Loads a fresh ConfigManager with every collaborator mocked and fake timers installed, then runs init().
- * @param {{docs: object[], nodeKps: Keypair[]}} options - seed documents and the cluster's node keypairs
+ * @param {{docs: object[], nodeKps: Keypair[], now: number}} options - seed documents, the cluster's node keypairs and,
+ * optionally, the time the fake clock starts at
  * @returns {Promise<object>} resolves to {configManager, model, notificationProvider, nonceProvider, container, MessageTypes}
  */
-async function loadConfigManager({docs = [], nodeKps}) {
+async function loadConfigManager({docs = [], nodeKps, now}) {
     jest.resetModules()
     jest.useFakeTimers()
+    if (now !== undefined)
+        jest.setSystemTime(now)
     const model = createModelMock(docs)
     const notificationProvider = {notify: jest.fn().mockResolvedValue(undefined), notifyNode: jest.fn().mockResolvedValue(undefined)}
     const container = {connectionManager: {removeByPubkey: jest.fn()}, logTokenProvider: {revoke: jest.fn()}}

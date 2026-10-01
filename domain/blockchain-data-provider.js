@@ -3,27 +3,11 @@ const {buildUpdateTransaction} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const container = require('./container')
 
-//These constants are a deliberate mirror of the submit schedule in
-//`reflector-node` (src/domain/runners/runner-base.js). The cluster's
-//ClusterRunner builds and submits the update tx with these exact fee
-//and maxTime values; the orchestrator must build with the same values
-//to derive a matching hash. If you change anything here, you MUST
-//change the node side in the same release.
-const baseUpdateFee = 10_000_000
-const FEE_MULTIPLIER = 8
-const firstAttemptTimeout = 30_000
-const retryAttemptTimeout = 15_000
-const maxSubmitAttempts = 3
+//The submit schedule lives in update-schedule.js, which reflector-node's parity test compares with the node's copy.
+//baseUpdateFee mirrors reflector-node src/domain/runners/cluster-runner.js; change both in the same release.
+const {FEE_MULTIPLIER, maxSubmitAttempts, __getMaxTime} = require('./update-schedule')
 
-/**
- * @param {number} syncTimestamp - sync timestamp in milliseconds
- * @param {number} iteration - 1-based iteration (attempt 0 → iteration 1)
- * @returns {number} - max time in seconds
- */
-function __getMaxTime(syncTimestamp, iteration) {
-    const budgetMs = firstAttemptTimeout + retryAttemptTimeout * (iteration - 1)
-    return (syncTimestamp + budgetMs) / 1000
-}
+const baseUpdateFee = 10_000_000
 
 /**
  *

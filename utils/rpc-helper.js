@@ -61,6 +61,17 @@ class EventsOutOfRangeError extends Error {
 }
 
 /**
+ * The causes a failed request carries, as a list: makeServerRequest attaches an array, any other cause is one entry
+ * @param {any} cause - error cause
+ * @returns {any[]}
+ */
+function toCauseList(cause) {
+    if (Array.isArray(cause))
+        return cause
+    return cause === undefined || cause === null ? [] : [cause]
+}
+
+/**
  * @param {string[]} urls - soroban rpc urls
  * @returns {Promise<number>} the latest ledger the RPC has closed
  */
@@ -105,7 +116,7 @@ async function getSubscriptionEvents(contractId, lastProcessedLedger, urls) {
                 if (oldestLedger > lastProcessedLedger)
                     throw new EventsOutOfRangeError(lastProcessedLedger, oldestLedger)
             }
-            for (const cause of err.cause || [])
+            for (const cause of toCauseList(err.cause))
                 logger.error(cause)
             throw err
         }

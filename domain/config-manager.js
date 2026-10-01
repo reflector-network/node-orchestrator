@@ -23,6 +23,9 @@ const notificationProvider = require('./notification-provider')
 const container = require('./container')
 const {setManagers} = require('./subscription-data-provider')
 const {getUpdateTxHash, maxSubmitAttempts} = require('./blockchain-data-provider')
+//endsBeforeExpiration: at the expiration date the orchestrator rejects a PENDING update, so a round must be over
+//by then. The nodes apply the same rule to every round they build, from the expiration date getConfigMessage sends
+const {isUpdateTimeReached, syncTimeframe, endsBeforeExpiration} = require('./update-schedule')
 
 /**
  * @typedef {import('./types').ConfigEnvelopeDto} ConfigEnvelopeDto
@@ -322,8 +325,9 @@ class ConfigManager {
             throw new ValidationError('Config min date is not valid. It should be rounded to seconds')
         if (configItem.envelope.timestamp && configItem.envelope.timestamp < config.minDate)
             throw new ValidationError('Config timestamp cannot be less than min date')
-        if (configItem.envelope.timestamp && configItem.envelope.timestamp > configItem.expirationDate)
-            throw new ValidationError('Config timestamp cannot be greater than expiration date')
+        //judged on the switch time the update will get, rounded up onto the sync grid (getTimestamp)
+        if (configItem.envelope.timestamp && !endsBeforeExpiration(getTimestamp(configItem.envelope.timestamp), configItem.expirationDate))
+            throw new ValidationError('Config timestamp leaves no time to apply the update before the expiration date')
         if (configItem.envelope.timestamp && !isTimestampValid(configItem.envelope.timestamp, 1000))
             throw new ValidationError('Config timestamp is not valid. It should be rounded to seconds')
         let isBlockchainUpdate = false
@@ -378,9 +382,12 @@ class ConfigManager {
 }
 
 function getConfigMessage() {
-    const pendingConfig = __pendingConfig && __pendingConfig.status !== ConfigStatus.PENDING
-        ? undefined
-        : __pendingConfig?.envelope.toPlainObject()
+    //the expiration date travels beside the envelope as unsigned metadata, so a node can skip a round that would end
+    //after it. It is outside every signed payload and ConfigEnvelope drops it, so a node that does not know
+    //it is unaffected; a wrong value can only make a node abstain from a round, never change what it signs
+    const pendingConfig = __pendingConfig?.status === ConfigStatus.PENDING
+        ? {...__pendingConfig.envelope.toPlainObject(), expirationDate: __pendingConfig.expirationDate}
+        : undefined
     return {
         type: MessageTypes.CONFIG,
         data: {
@@ -453,8 +460,10 @@ async function rejectPendingConfig() {
     __pendingConfig.status = ConfigStatus.REJECTED
 }
 
-const updateIdleTimeframe = 1000 * 60 * 2 //2 minutes
-const updateGracePeriod = 1000 * 60 * 3 //3 minutes for every node to see the PENDING envelope before it executes
+const updateIdleTimeframe = syncTimeframe //2 minutes, the sync grid of update-schedule.js
+//two ticks, so a default switch time stays on the grid and leaves every node two to four minutes to see the PENDING
+//envelope before it executes
+const updateGracePeriod = 2 * updateIdleTimeframe
 
 function isPendingConfigExpired() {
     return __pendingConfig.envelope.timestamp < Date.now()
@@ -488,11 +497,23 @@ async function processPendingConfig(configManager, syncTimestamp) {
                         await rejectPendingConfig()
                         break
                     }
-                    const updateTimeReached = __pendingConfig.envelope.timestamp < syncTimestamp
+                    //inclusive, as reflector-node's ClusterRunner decides it: both sides build the update at the tick
+                    //equal to its switch time
+                    const updateTimeReached = isUpdateTimeReached(__pendingConfig.envelope.timestamp, syncTimestamp)
                     if (!(updateTimeReached || __pendingConfig.envelope.allowEarlySubmission))
                         return
 
                     if (!updateTimeReached) { //if update time is not reached, check if all signatures are present
+                        //allowEarlySubmission is not signed, so it may skip the derived execution slot but never the
+                        //signed minDate. Nodes judge this on their tick, not the wall clock (reflector-node
+                        //cluster-runner.js: `timestamp < minDate`), so this must match on the sync tick too - or it
+                        //polls for a transaction nobody builds. Changing this requires changing both sides in the
+                        //same release
+                        const {minDate} = __pendingConfig.envelope.config
+                        if (minDate && syncTimestamp < minDate) {
+                            logger.debug({msg: 'Early submission is not allowed before the signed minDate', minDate})
+                            return
+                        }
                         if (!areAllSignaturesPresent(
                             [...__currentConfig.envelope.config.nodes.keys()],
                             [...__pendingConfig.envelope.config.nodes.keys()],
@@ -662,7 +683,7 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
             update.$set.status = currentStatus
             if (currentStatus === ConfigStatus.PENDING) {
                 //get timestamp for pending config
-                update.$set.timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
+                update.$set.timestamp = scheduleSwitch(configItem)
             }
         }
     }
@@ -684,17 +705,34 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
 }
 
 /**
- * Pick the execution time of an update that reached PENDING. Without an explicit timestamp the update runs a grace
- * period after the later of `minDate` and now.
+ * Pick the execution time of an update that reached PENDING. It always lies on the sync grid: a round started there ends
+ * its last attempt (maxTime 60 s after the switch, polled for one second more) a minute before the next tick, where a
+ * failed round is retried; from an odd-minute switch time that tick came a second before the poll ended, so the retry
+ * could read an account sequence the nodes' retry had already moved.
+ * An explicit timestamp is rounded up onto the grid, which keeps it at or after the signed `minDate` it may not
+ * precede; the timestamp is not signed, and votes on a PENDING envelope carry the stored value. Without one the update
+ * runs a grace period after the later of `minDate` and now.
  * @param {number} timestamp - timestamp carried by the envelope, 0 when the proposer left it open
  * @param {number} [minDate] - earliest execution time the config allows
  * @returns {number}
  */
 function getTimestamp(timestamp, minDate) {
     if (timestamp)
-        return timestamp
+        return Math.ceil(timestamp / updateIdleTimeframe) * updateIdleTimeframe
     const earliest = normalizeTimestamp(Math.max(minDate || 0, Date.now()), updateIdleTimeframe)
     return earliest + updateGracePeriod
+}
+
+/**
+ * The switch time of an update turning PENDING, refused when its round would outlast the proposal
+ * @param {ConfigItem} configItem - the update turning PENDING
+ * @returns {number}
+ */
+function scheduleSwitch(configItem) {
+    const timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
+    if (!endsBeforeExpiration(timestamp, configItem.expirationDate))
+        throw new ValidationError('The update cannot be applied before the proposal expires')
+    return timestamp
 }
 
 /**
@@ -710,7 +748,7 @@ async function createConfig(configItem, nodesCount, isInitConfig, isBlockchainUp
     configItem.status = currentStatus
     configItem.isBlockchainUpdate = isBlockchainUpdate
     if (currentStatus === ConfigStatus.PENDING) {
-        configItem.envelope.timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
+        configItem.envelope.timestamp = scheduleSwitch(configItem)
     }
     const rawConfig = configItem.toPlainObject()
     const configDoc = new ConfigEnvelopeModel(rawConfig)

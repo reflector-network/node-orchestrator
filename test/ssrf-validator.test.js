@@ -167,10 +167,16 @@ describe('IPv4-translated addresses', () => {
         expect(() => validateGatewayUrl('https://[::ffff:0:7f00:1]')).toThrow('Gateway URL points at a private address')
     })
 
-    test('a request url on a private one is refused however the url parser respells it', async () => {
-        for (const url of ['http://[::ffff:0:7f00:1]/', 'http://[::ffff:0:127.0.0.1]/', 'http://[0:0:0:0:ffff:0:a9fe:a9fe]/'])
-            await expect(resolveAndValidate(url)).rejects.toThrow('SSRF blocked')
-        const {resolvedIp} = await resolveAndValidate('http://[::ffff:0:808:808]/')
-        expect(resolvedIp).toBe('::ffff:0:808:808')
+    test('a request url on a private one is refused however the url parser respells it, without a dns lookup', async () => {
+        const lookup = jest.spyOn(require('dns').promises, 'lookup')
+        try {
+            for (const url of ['http://[::ffff:0:7f00:1]/', 'http://[::ffff:0:127.0.0.1]/', 'http://[0:0:0:0:ffff:0:a9fe:a9fe]/'])
+                await expect(resolveAndValidate(url)).rejects.toThrow('SSRF blocked')
+            const {resolvedIp} = await resolveAndValidate('http://[::ffff:0:808:808]/')
+            expect(resolvedIp).toBe('::ffff:0:808:808')
+            expect(lookup).not.toHaveBeenCalled()
+        } finally {
+            lookup.mockRestore()
+        }
     })
 })

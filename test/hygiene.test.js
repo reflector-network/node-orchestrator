@@ -153,24 +153,57 @@ describe('pending update grace period', () => {
 
     afterEach(() => jest.restoreAllMocks())
 
-    test('an explicit timestamp is returned unchanged', () => {
-        expect(getTimestamp(1700000000000, 0)).toBe(1700000000000)
+    test('an explicit timestamp on the sync grid is returned unchanged', () => {
+        expect(getTimestamp(1_700_000_040_000, 0)).toBe(1_700_000_040_000)
+    })
+
+    test('an explicit timestamp off the sync grid is rounded up onto it, so it never precedes the signed minDate', () => {
+        //admin-dashboard schedules an update in the middle of a timeframe and signs that same time as minDate
+        expect(getTimestamp(1_700_000_000_000, 1_700_000_000_000)).toBe(1_700_000_040_000)
+        expect(getTimestamp(1_700_000_040_001, 0)).toBe(1_700_000_160_000)
+        expect(getTimestamp(1_700_000_159_000, 0)).toBe(1_700_000_160_000)
     })
 
     test('a past minDate does not schedule the update in the past', () => {
         jest.spyOn(Date, 'now').mockReturnValue(now)
-        expect(getTimestamp(0, 1000)).toBe(1_700_000_040_000 + 3 * 60 * 1000)
+        expect(getTimestamp(0, 1000)).toBe(1_700_000_040_000 + 4 * 60 * 1000)
     })
 
     test('a missing minDate runs the grace period from now', () => {
         jest.spyOn(Date, 'now').mockReturnValue(now)
-        expect(getTimestamp(0, undefined)).toBe(1_700_000_040_000 + 3 * 60 * 1000)
+        expect(getTimestamp(0, undefined)).toBe(1_700_000_040_000 + 4 * 60 * 1000)
     })
 
     test('a future minDate wins over the current time', () => {
         jest.spyOn(Date, 'now').mockReturnValue(now)
         const future = now + 1000 * 60 * 60 //1_700_003_650_000, normalises to 1_700_003_640_000
-        expect(getTimestamp(0, future)).toBe(1_700_003_640_000 + 3 * 60 * 1000)
+        expect(getTimestamp(0, future)).toBe(1_700_003_640_000 + 4 * 60 * 1000)
+    })
+
+    test('the default switch time lies on the sync grid, two to four minutes ahead, whatever minute it is now', () => {
+        const grid = 1_800_000_000_000
+        for (const offset of [0, 1, 59_999, 60_000, 60_001, 119_999]) { //even and odd minutes
+            jest.spyOn(Date, 'now').mockReturnValue(grid + offset)
+            const switchTime = getTimestamp(0, 0)
+            expect(switchTime).toBe(grid + 240_000)
+            expect(switchTime % 120_000).toBe(0)
+            expect(switchTime - (grid + offset)).toBeGreaterThan(120_000)
+            expect(getTimestamp(0, grid + offset)).toBe(grid + 240_000) //a minDate of now lands on the same tick
+        }
+        const oddMinuteMinDate = grid + 3_600_000 + 60_000
+        expect(getTimestamp(0, oddMinuteMinDate)).toBe(grid + 3_600_000 + 240_000)
+    })
+
+    test('the last attempt of a round started at the default switch time ends before the next tick', () => {
+        const {__getMaxTime, maxSubmitAttempts} = require('../domain/update-schedule')
+        jest.spyOn(Date, 'now').mockReturnValue(1_800_000_060_000) //an odd minute
+        const switchTime = getTimestamp(0, 0)
+        const pollEnd = __getMaxTime(switchTime, maxSubmitAttempts) * 1000 + 1000 //pollForTransactionSuccess stops here
+        expect(pollEnd).toBe(switchTime + 61_000)
+        //a failed round is retried at the next grid tick (getNextSyncTimestamp: normalize(tick + 2 minutes)); from an
+        //odd-minute switch time that tick came one second before the poll ended, from a grid switch time 59 s after it
+        const nextTick = Math.floor((switchTime + 120_000) / 120_000) * 120_000
+        expect(nextTick - pollEnd).toBe(59_000)
     })
 
     test('against the real clock the result lies ahead of now', () => {
