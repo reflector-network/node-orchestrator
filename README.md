@@ -166,6 +166,16 @@ anonymous clients share 5 slots. Node connections are unaffected either way. IPv
   once every node has signed it, but never before its signed `minDate`, the same check nodes make. The first configuration is applied as
   soon as it reaches a majority. For an update that needs a transaction, the orchestrator derives the hash the cluster
   submits and polls Soroban RPC for it.
+- **A proposal is built before it is accepted.** A new proposal that calls a contract is built once, from the system
+  account's current sequence, as the first attempt at its switch time would be. Building simulates the call, so a
+  proposal the contracts refuse is refused with the simulation error, and so is one that cannot be checked because
+  Soroban RPC does not answer. A node set change calls no contract and is not built. A change on chain between the
+  proposal and its switch time can still make its rounds fail.
+- **Votes change while an update is open.** A signer can change their vote, and the initiator withdraw the proposal,
+  while it is voting or pending. A pending update's rounds start at every 2-minute tick from its switch time on (every
+  tick when it allows early submission), and from 15 s before such a tick until its round is over, 61 s after it, a
+  changed vote is refused: the nodes may already hold a signed transaction that would land after the update was
+  dropped. A new vote is accepted at any time.
 - **Statistics.** Nodes are polled 10 s after start, then 60 s after each round ends. Gateway metrics are stored per
   round and deleted after 7 days.
 - **Landed transactions.** Horizon is scanned ledger by ledger, 10 s after each scan ends; only transactions Horizon
