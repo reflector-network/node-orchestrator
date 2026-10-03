@@ -301,6 +301,10 @@ class ConfigManager {
         await consumeSignatureNonce(pubkey, nonce)
 
         const {configToModify, signatureIndex} = getConfigToModify(configItem) || {}
+        //a new signature cannot drop a PENDING update, a changed one can
+        if (configToModify === __pendingConfig && configToModify.status === ConfigStatus.PENDING && signatureIndex >= 0
+            && isRoundInFlight(configToModify, Date.now()))
+            throw new ValidationError('An update round is in progress, try again in a minute')
         if (configToModify) {
             const resultConfig = await updateConfig(
                 configToModify,
@@ -383,6 +387,27 @@ class ConfigManager {
     get currentConfig() {
         return __currentConfig?.envelope?.config
     }
+}
+
+//how long before a round's tick a vote change is already refused: the update must not be dropped while the nodes are
+//about to build it
+const roundLeadTime = 15_000
+
+/**
+ * Whether a round of a PENDING update runs now or starts within roundLeadTime. A round starts at every sync tick from
+ * the switch time on (every tick when early submission is allowed) and is over after its last attempt's maxTime and the
+ * orchestrator's poll a second past it. Dropping the update inside that span would leave the nodes holding a signed
+ * transaction that can still land after the orchestrator rejected the update
+ * @param {ConfigItem} pendingConfig - the PENDING update
+ * @param {number} now - current time in milliseconds
+ * @returns {boolean}
+ */
+function isRoundInFlight(pendingConfig, now) {
+    //the latest tick whose round could cover now: rounds end long before the next tick's lead time begins
+    const tick = Math.floor((now + roundLeadTime) / syncTimeframe) * syncTimeframe
+    if (endsBeforeExpiration(tick, now)) //the same end of a round that bounds it by the expiration date
+        return false
+    return pendingConfig.envelope.allowEarlySubmission || isUpdateTimeReached(pendingConfig.envelope.timestamp, tick)
 }
 
 const maxBuildFailureLength = 500
