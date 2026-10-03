@@ -9,6 +9,13 @@ const ConnectionManager = require('../domain/connections-manager')
 const NodeSettingsManager = require('../domain/node-settings-manager')
 const constants = require('./constants')
 
+//this suite covers the stored lifecycle against a real database; a proposal's transaction would need the network, so
+//its build check passes here (test/config-manager-build-check.test.js covers it)
+jest.mock('../domain/blockchain-data-provider', () => ({
+    ...jest.requireActual('../domain/blockchain-data-provider'),
+    checkUpdateBuilds: jest.fn(() => Promise.resolve())
+}))
+
 const configManager = new ConfigManager()
 
 //ConfigManager.init starts processPendingConfig, which re-arms itself with setTimeout for the life of the process and

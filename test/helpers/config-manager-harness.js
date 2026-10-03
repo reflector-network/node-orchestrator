@@ -218,7 +218,8 @@ function createModelMock(seedDocs = []) {
  * Loads a fresh ConfigManager with every collaborator mocked and fake timers installed, then runs init().
  * @param {{docs: object[], nodeKps: Keypair[], now: number}} options - seed documents, the cluster's node keypairs and,
  * optionally, the time the fake clock starts at
- * @returns {Promise<object>} resolves to {configManager, model, notificationProvider, nonceProvider, container, MessageTypes}
+ * @returns {Promise<object>} resolves to {configManager, model, notificationProvider, nonceProvider, container, MessageTypes,
+ * rpcHelper, blockchainDataProvider}
  */
 async function loadConfigManager({docs = [], nodeKps, now}) {
     jest.resetModules()
@@ -243,7 +244,9 @@ async function loadConfigManager({docs = [], nodeKps, now}) {
     jest.doMock(path.join(root, 'domain', 'container.js'), () => container)
     jest.doMock(path.join(root, 'domain', 'subscription-data-provider.js'), () => ({setManagers: jest.fn()}))
     jest.doMock(path.join(root, 'domain', 'notification-provider.js'), () => notificationProvider)
-    jest.doMock(path.join(root, 'domain', 'blockchain-data-provider.js'), () => ({getUpdateTxHash: jest.fn(), maxSubmitAttempts: 1}))
+    //a proposal's transaction builds by default, so only the tests about that check have to say otherwise
+    const blockchainDataProvider = {getUpdateTxHash: jest.fn(), checkUpdateBuilds: jest.fn(() => Promise.resolve()), maxSubmitAttempts: 1}
+    jest.doMock(path.join(root, 'domain', 'blockchain-data-provider.js'), () => blockchainDataProvider)
     //a successful lookup by default, so a test that drives the blockchain apply path only has to assert the hashes
     const rpcHelper = {getUpdateTx: jest.fn(() => Promise.resolve({status: 'SUCCESS'})), getAccountSequence: jest.fn()}
     jest.doMock(path.join(root, 'utils', 'rpc-helper.js'), () => rpcHelper)
@@ -252,7 +255,7 @@ async function loadConfigManager({docs = [], nodeKps, now}) {
     const MessageTypes = require(path.join(root, 'server', 'ws', 'handlers', 'message-types.js'))
     const configManager = new ConfigManager()
     await configManager.init(nodeKps.map(kp => kp.publicKey()))
-    return {configManager, model, notificationProvider, nonceProvider, container, MessageTypes, rpcHelper}
+    return {configManager, model, notificationProvider, nonceProvider, container, MessageTypes, rpcHelper, blockchainDataProvider}
 }
 
 module.exports = {

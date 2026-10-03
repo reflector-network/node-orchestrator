@@ -22,7 +22,7 @@ const {computeUpdateStatus, stripRejectedSignatures, parseBoundedInt} = require(
 const notificationProvider = require('./notification-provider')
 const container = require('./container')
 const {setManagers} = require('./subscription-data-provider')
-const {getUpdateTxHash, maxSubmitAttempts} = require('./blockchain-data-provider')
+const {getUpdateTxHash, checkUpdateBuilds, maxSubmitAttempts} = require('./blockchain-data-provider')
 //endsBeforeExpiration: at the expiration date the orchestrator rejects a PENDING update, so a round must be over
 //by then. The nodes apply the same rule to every round they build, from the expiration date getConfigMessage sends
 const {isUpdateTimeReached, syncTimeframe, endsBeforeExpiration} = require('./update-schedule')
@@ -331,6 +331,7 @@ class ConfigManager {
         if (configItem.envelope.timestamp && !isTimestampValid(configItem.envelope.timestamp, 1000))
             throw new ValidationError('Config timestamp is not valid. It should be rounded to seconds')
         let isBlockchainUpdate = false
+        let invokesContract = false
         if (__currentConfig) {
             const updates = buildUpdates(1n, __currentConfig.envelope.config, config)
             if (updates.size === 0)
@@ -341,12 +342,15 @@ class ConfigManager {
                     const currentNodes = [...update.currentNodes.keys()]
                     if (newNodes.length === currentNodes.length && newNodes.every(n => currentNodes.includes(n)))
                         continue
-                }
+                } else
+                    invokesContract = true //every update but a node set change calls a contract
                 isBlockchainUpdate = true
             }
         }
         if (rejected)
             throw new ValidationError('Rejected signature cannot be used to create config')
+        if (invokesContract)
+            await assertUpdateBuilds(config, getTimestamp(configItem.envelope.timestamp, config.minDate))
 
         __pendingConfig = await createConfig(configItem, this.allNodePubkeys().length, !__currentConfig, isBlockchainUpdate)
 
@@ -378,6 +382,27 @@ class ConfigManager {
     }
     get currentConfig() {
         return __currentConfig?.envelope?.config
+    }
+}
+
+const maxBuildFailureLength = 500
+
+/**
+ * Builds the transaction of a new proposal once, which simulates its contract call. An update whose call fails would
+ * stay PENDING until it expires and block every other proposal meanwhile, so it is refused before anyone votes. A
+ * change on chain between now and the switch time can still make the round fail
+ * @param {Config} newConfig - proposed config
+ * @param {number} timestamp - switch time the update would get
+ * @returns {Promise<void>}
+ */
+async function assertUpdateBuilds(newConfig, timestamp) {
+    try {
+        await checkUpdateBuilds(__currentConfig.envelope.config, newConfig, timestamp)
+    } catch (err) {
+        //the reply carries the top-level message only: the causes of an rpc failure can name a provider url
+        logger.warn({err}, 'Refused a proposal whose update transaction cannot be built')
+        const reason = err.message.length > maxBuildFailureLength ? err.message.slice(0, maxBuildFailureLength) + '...' : err.message
+        throw new ValidationError(`The update transaction cannot be built: ${reason}`)
     }
 }
 

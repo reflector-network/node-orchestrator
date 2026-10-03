@@ -1,6 +1,7 @@
 const {Account} = require('@stellar/stellar-sdk')
 const {buildUpdateTransaction} = require('@reflector/reflector-shared')
 const logger = require('../logger')
+const {getAccountSequence} = require('../utils/rpc-helper')
 const container = require('./container')
 
 //The submit schedule lives in update-schedule.js, which reflector-node's parity test compares with the node's copy.
@@ -47,8 +48,22 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
     }
 }
 
+/**
+ * Builds the update transaction from the system account's current sequence, as a round would. Building simulates its
+ * contract call, so an update the contracts refuse rejects here with the simulation error
+ * @param {Config} currentConfig - current config
+ * @param {Config} newConfig - proposed config
+ * @param {number} timestamp - switch time in milliseconds
+ * @returns {Promise<void>}
+ */
+async function checkUpdateBuilds(currentConfig, newConfig, timestamp) {
+    const accountSequence = await getAccountSequence(currentConfig)
+    await getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, Date.now())
+}
+
 module.exports = {
     getUpdateTxHash,
+    checkUpdateBuilds,
     maxSubmitAttempts,
     baseUpdateFee,
     FEE_MULTIPLIER,
