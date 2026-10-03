@@ -49,7 +49,8 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
 }
 
 /**
- * Builds the update transaction from the system account's current sequence, as a round would. Building simulates its
+ * Builds the update transaction from the system account's current sequence, as the first attempt of the round at the
+ * switch time would; the switch time is on the sync grid, so the bounds are whole seconds. Building simulates its
  * contract call, so an update the contracts refuse rejects here with the simulation error
  * @param {Config} currentConfig - current config
  * @param {Config} newConfig - proposed config
@@ -58,7 +59,7 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
  */
 async function checkUpdateBuilds(currentConfig, newConfig, timestamp) {
     const accountSequence = await getAccountSequence(currentConfig)
-    await getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, Date.now())
+    await getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, timestamp)
 }
 
 module.exports = {

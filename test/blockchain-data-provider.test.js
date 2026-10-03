@@ -68,6 +68,21 @@ describe('checkUpdateBuilds', () => {
         expect(options.account.sequenceNumber()).toBe('123')
     })
 
+    test('the transaction is bounded as the first attempt of the round at the switch time, in whole seconds', async () => {
+        const {provider, buildUpdateTransaction} = load({build: () => Promise.resolve(null)})
+        jest.useFakeTimers({now: 1_800_000_000_123}) //a clock between two seconds
+        try {
+            await provider.checkUpdateBuilds(currentConfig, newConfig, 1_800_000_120_000)
+        } finally {
+            jest.useRealTimers()
+        }
+
+        const {maxTime, fee} = buildUpdateTransaction.mock.calls[0][0]
+        expect(maxTime).toBe(1_800_000_150) //the switch time + 30 s, the first attempt's bound
+        expect(Number.isInteger(maxTime)).toBe(true)
+        expect(fee).toBe(10_000_000)
+    })
+
     test('a build that fails, such as a failed simulation, rejects with its error', async () => {
         const {provider} = load({build: () => Promise.reject(new Error('HostError: Error(Contract, #5)'))})
 
