@@ -314,6 +314,7 @@ class ConfigManager {
                 !__currentConfig
             )
             updateItems(this.allNodePubkeys())
+            wakePendingConfigProcessing(this)
             notificationProvider.notify({type: 'config-updated', data: getAnonymousUpdate(resultConfig)}, ChannelTypes.ANON)
             return
         }
@@ -359,6 +360,7 @@ class ConfigManager {
         __pendingConfig = await createConfig(configItem, this.allNodePubkeys().length, !__currentConfig, isBlockchainUpdate)
 
         updateItems(this.allNodePubkeys())
+        wakePendingConfigProcessing(this)
         notificationProvider.notify({type: 'config-created', data: getAnonymousUpdate(configItem)}, ChannelTypes.ANON)
 
     }
@@ -525,12 +527,31 @@ function getNextSyncTimestamp(timestamp) {
     return __pendingConfig.envelope.timestamp
 }
 
+//the loop sleeps until the next moment the pending config needs it, judged from the update pending when it last ran
+let __processTimer = null
+let __processing = false
+
+/**
+ * Runs the pending config loop now instead of at the time it set for itself. A vote can withdraw the update the loop
+ * sleeps for and make another one pending with an earlier switch time; without a wake that update would wait for the
+ * old switch time while the nodes apply it on their own. A running pass is left alone: it re-arms from the current
+ * state when it ends
+ * @param {ConfigManager} configManager - the config manager the loop serves
+ */
+function wakePendingConfigProcessing(configManager) {
+    if (__processing)
+        return
+    clearTimeout(__processTimer)
+    __processTimer = setTimeout(() => processPendingConfig(configManager, normalizeTimestamp(Date.now(), updateIdleTimeframe)), 0)
+}
+
 /**
  * @param {ConfigManager} configManager
  * @param {number} syncTimestamp
  */
 async function processPendingConfig(configManager, syncTimestamp) {
     let timeout = 5000
+    __processing = true
     try {
         if (!__pendingConfig)
             return
@@ -617,7 +638,8 @@ async function processPendingConfig(configManager, syncTimestamp) {
         //setTimeout clamps any delay above 2^31-1 ms to 1 ms and warns, which turned a far-future pending config into
         //a busy loop; cap the delay and let the next wake recompute syncTimestamp and the remaining delay
         const maxDelay = 2147483647
-        setTimeout(() => processPendingConfig(configManager, syncTimestamp), Math.min(Math.max(timeout, 0), maxDelay))
+        __processTimer = setTimeout(() => processPendingConfig(configManager, syncTimestamp), Math.min(Math.max(timeout, 0), maxDelay))
+        __processing = false
     }
 }
 
