@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@reflector/oracle-client": "github:reflector-network/oracle-client#v7.2.0-rc2",
-    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.2.0-rc2",
+    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.2.0-rc3",
     "@stellar-expert/tx-meta-effects-parser": "^8.3.3",
     "@stellar/stellar-sdk": "17.0.1",
     "axios": "1.15.0",
