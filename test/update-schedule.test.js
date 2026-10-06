@@ -1,43 +1,26 @@
 /*eslint-disable no-undef */
 const fs = require('fs')
 const path = require('path')
-const schedule = require('../domain/update-schedule')
+const schedule = require('@reflector/reflector-shared')
 const provider = require('../domain/blockchain-data-provider')
 
-describe('the update schedule', () => {
-    const switchTime = 1_800_000_000_000
+describe('the update schedule comes from reflector-shared', () => {
+    const domain = path.resolve(__dirname, '..', 'domain')
 
-    test('the switch is inclusive: the tick equal to the switch time is due', () => {
-        expect(schedule.isUpdateTimeReached(switchTime, switchTime)).toBe(true)
-        expect(schedule.isUpdateTimeReached(switchTime, switchTime + 1)).toBe(true)
-        expect(schedule.isUpdateTimeReached(switchTime, switchTime - 1)).toBe(false)
+    test('the orchestrator keeps no copy of its own', () => {
+        expect(fs.existsSync(path.join(domain, 'update-schedule.js'))).toBe(false)
     })
 
-    test('the submit schedule is the one the nodes build with', () => {
-        expect(schedule.maxSubmitAttempts).toBe(3)
-        expect(schedule.FEE_MULTIPLIER).toBe(8)
-        expect([1, 2, 3].map(iteration => schedule.__getMaxTime(switchTime, iteration) - switchTime / 1000)).toEqual([30, 45, 60])
+    test('config-manager judges the switch and the expiry with the shared rules', () => {
+        const source = fs.readFileSync(path.join(domain, 'config-manager.js'), 'utf8')
+        expect(source).not.toMatch(/function (endsBeforeExpiration|isUpdateTimeReached)/)
+        expect(source).toContain("const {isUpdateTimeReached, syncTimeframe, endsBeforeExpiration} = require('@reflector/reflector-shared')")
     })
 
-    test('a round ends before expiry only when its last attempt and the poll a second past it are over by then', () => {
-        //the last attempt's maxTime is the tick + 60 s, and the orchestrator polls one second past it
-        expect(schedule.endsBeforeExpiration(switchTime, switchTime + 61_000)).toBe(true)
-        expect(schedule.endsBeforeExpiration(switchTime, switchTime + 61_001)).toBe(true)
-        expect(schedule.endsBeforeExpiration(switchTime, switchTime + 60_999)).toBe(false)
-        expect(schedule.endsBeforeExpiration(switchTime, switchTime)).toBe(false)
-        expect(schedule.endsBeforeExpiration(switchTime + 120_000, switchTime + 181_000)).toBe(true)
-        expect(schedule.endsBeforeExpiration(switchTime + 120_000, switchTime + 180_999)).toBe(false)
-    })
-
-    test('config-manager judges expiry with the shared rule and keeps no copy of its own', () => {
-        const source = fs.readFileSync(path.resolve(__dirname, '..', 'domain', 'config-manager.js'), 'utf8')
-        expect(source).not.toMatch(/function endsBeforeExpiration/)
-        expect(source).toMatch(/\{[^}]*\bendsBeforeExpiration\b[^}]*\} = require\('\.\/update-schedule'\)/)
-    })
-
-    test('the blockchain data provider uses the same functions', () => {
-        expect(provider.__getMaxTime).toBe(schedule.__getMaxTime)
+    test('the blockchain data provider derives hashes with the same schedule', () => {
         expect(provider.FEE_MULTIPLIER).toBe(schedule.FEE_MULTIPLIER)
         expect(provider.maxSubmitAttempts).toBe(schedule.maxSubmitAttempts)
+        const source = fs.readFileSync(path.join(domain, 'blockchain-data-provider.js'), 'utf8')
+        expect(source).toContain('getMaxTime(syncTimestamp, iteration, clusterRoundLength)')
     })
 })

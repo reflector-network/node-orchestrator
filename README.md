@@ -159,7 +159,7 @@ anonymous clients share 5 slots. Node connections are unaffected either way. IPv
   at least 7 days ahead. An update that reached a majority becomes pending and executes at its timestamp, which always
   lies on a 2-minute boundary: an explicit timestamp is rounded up to the next one, and without one the update executes
   4 minutes after the later of `minDate` and the time it became pending, rounded down to a 2-minute boundary. The
-  timestamp must leave the update 61 s (its three submit attempts and a last poll) before the expiration date: a
+  timestamp must leave the update 61 s (its two submit attempts and a last poll) before the expiration date: a
   proposal whose timestamp does not is refused, and so is the vote that would make an update pending too close to its
   expiry. The pending update is sent to nodes with its expiration date, outside the signed envelope, and a node skips
   any round that would not end 61 s before it. An update that allows early submission executes before its timestamp

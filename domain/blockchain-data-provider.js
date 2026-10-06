@@ -1,12 +1,10 @@
 const {Account} = require('@stellar/stellar-sdk')
-const {buildUpdateTransaction} = require('@reflector/reflector-shared')
+//The submit schedule is reflector-shared's, the one the nodes build with; a cluster round lasts clusterRoundLength.
+//baseUpdateFee mirrors reflector-node src/domain/runners/cluster-runner.js; change both in the same release.
+const {buildUpdateTransaction, FEE_MULTIPLIER, maxSubmitAttempts, getMaxTime, clusterRoundLength} = require('@reflector/reflector-shared')
 const logger = require('../logger')
 const {getAccountSequence} = require('../utils/rpc-helper')
 const container = require('./container')
-
-//The submit schedule lives in update-schedule.js, which reflector-node's parity test compares with the node's copy.
-//baseUpdateFee mirrors reflector-node src/domain/runners/cluster-runner.js; change both in the same release.
-const {FEE_MULTIPLIER, maxSubmitAttempts, __getMaxTime} = require('./update-schedule')
 
 const baseUpdateFee = 10_000_000
 
@@ -23,7 +21,7 @@ const baseUpdateFee = 10_000_000
 async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, syncTimestamp, iteration = 0) {
 
     const fee = baseUpdateFee * Math.pow(FEE_MULTIPLIER, iteration)
-    const maxTime = __getMaxTime(syncTimestamp, iteration + 1)
+    const maxTime = getMaxTime(syncTimestamp, iteration, clusterRoundLength)
 
     const {network, systemAccount} = currentConfig
     const {urls, passphrase} = container.appConfig.getNetworkConfig(network)
@@ -67,6 +65,5 @@ module.exports = {
     checkUpdateBuilds,
     maxSubmitAttempts,
     baseUpdateFee,
-    FEE_MULTIPLIER,
-    __getMaxTime
+    FEE_MULTIPLIER
 }

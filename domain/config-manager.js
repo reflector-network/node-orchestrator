@@ -25,7 +25,7 @@ const {setManagers} = require('./subscription-data-provider')
 const {getUpdateTxHash, checkUpdateBuilds, maxSubmitAttempts} = require('./blockchain-data-provider')
 //endsBeforeExpiration: at the expiration date the orchestrator rejects a PENDING update, so a round must be over
 //by then. The nodes apply the same rule to every round they build, from the expiration date getConfigMessage sends
-const {isUpdateTimeReached, syncTimeframe, endsBeforeExpiration} = require('./update-schedule')
+const {isUpdateTimeReached, syncTimeframe, endsBeforeExpiration} = require('@reflector/reflector-shared')
 
 /**
  * @typedef {import('./types').ConfigEnvelopeDto} ConfigEnvelopeDto
@@ -512,7 +512,7 @@ async function rejectPendingConfig() {
     __pendingConfig.status = ConfigStatus.REJECTED
 }
 
-const updateIdleTimeframe = syncTimeframe //2 minutes, the sync grid of update-schedule.js
+const updateIdleTimeframe = syncTimeframe //2 minutes, the sync grid of the shared update schedule
 //two ticks, so a default switch time stays on the grid and leaves every node two to four minutes to see the PENDING
 //envelope before it executes
 const updateGracePeriod = 2 * updateIdleTimeframe

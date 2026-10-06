@@ -195,10 +195,10 @@ describe('pending update grace period', () => {
     })
 
     test('the last attempt of a round started at the default switch time ends before the next tick', () => {
-        const {__getMaxTime, maxSubmitAttempts} = require('../domain/update-schedule')
+        const {getMaxTime, maxSubmitAttempts, clusterRoundLength} = require('@reflector/reflector-shared')
         jest.spyOn(Date, 'now').mockReturnValue(1_800_000_060_000) //an odd minute
         const switchTime = getTimestamp(0, 0)
-        const pollEnd = __getMaxTime(switchTime, maxSubmitAttempts) * 1000 + 1000 //pollForTransactionSuccess stops here
+        const pollEnd = getMaxTime(switchTime, maxSubmitAttempts - 1, clusterRoundLength) * 1000 + 1000 //pollForTransactionSuccess stops here
         expect(pollEnd).toBe(switchTime + 61_000)
         //a failed round is retried at the next grid tick (getNextSyncTimestamp: normalize(tick + 2 minutes)); from an
         //odd-minute switch time that tick came one second before the poll ended, from a grid switch time 59 s after it

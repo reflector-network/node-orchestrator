@@ -1,32 +1,19 @@
 /*eslint-disable no-undef */
-const {__getMaxTime, maxSubmitAttempts, baseUpdateFee, FEE_MULTIPLIER} = require('../domain/blockchain-data-provider')
+const schedule = require('@reflector/reflector-shared')
+const {maxSubmitAttempts, baseUpdateFee, FEE_MULTIPLIER} = require('../domain/blockchain-data-provider')
 
 describe('blockchain-data-provider submit schedule', () => {
-    test('attempt 0 (iteration 1) gives 30s lookahead', () => {
-        const syncTs = 1_700_000_000_000
-        expect(__getMaxTime(syncTs, 1) - syncTs / 1000).toBe(30)
-    })
-
-    test('attempt 1 (iteration 2) gives 45s lookahead', () => {
-        const syncTs = 1_700_000_000_000
-        expect(__getMaxTime(syncTs, 2) - syncTs / 1000).toBe(45)
-    })
-
-    test('attempt 2 (iteration 3) gives 60s lookahead', () => {
-        const syncTs = 1_700_000_000_000
-        expect(__getMaxTime(syncTs, 3) - syncTs / 1000).toBe(60)
-    })
-
-    test('exports parity constants', () => {
-        expect(maxSubmitAttempts).toBe(3)
-        expect(baseUpdateFee).toBe(10_000_000)
+    test('the shared schedule: two attempts, the retry at 8x', () => {
+        expect(maxSubmitAttempts).toBe(2)
+        expect(maxSubmitAttempts).toBe(schedule.maxSubmitAttempts)
         expect(FEE_MULTIPLIER).toBe(8)
+        expect(baseUpdateFee).toBe(10_000_000)
     })
 })
 
 test('the module exports only the live helpers', () => {
     const provider = require('../domain/blockchain-data-provider')
-    expect(Object.keys(provider).sort()).toEqual(['FEE_MULTIPLIER', '__getMaxTime', 'baseUpdateFee', 'checkUpdateBuilds', 'getUpdateTxHash', 'maxSubmitAttempts'].sort())
+    expect(Object.keys(provider).sort()).toEqual(['FEE_MULTIPLIER', 'baseUpdateFee', 'checkUpdateBuilds', 'getUpdateTxHash', 'maxSubmitAttempts'].sort())
 })
 
 describe('checkUpdateBuilds', () => {
@@ -51,6 +38,19 @@ describe('checkUpdateBuilds', () => {
     const newConfig = {}
 
     afterEach(() => jest.resetModules())
+
+    test('each attempt of a cluster round is derived with the 60 s cluster envelope', async () => {
+        const {provider, buildUpdateTransaction} = load({
+            build: () => Promise.resolve({hashHex: 'ab', hasMoreTxns: false, transaction: {toXdr: () => '', sequence: '124'}})
+        })
+        const sync = 1_800_000_000_000
+        await provider.getUpdateTxHash(currentConfig, newConfig, '123', sync, sync, 0)
+        await provider.getUpdateTxHash(currentConfig, newConfig, '123', sync, sync, 1)
+        expect(buildUpdateTransaction.mock.calls.map(([p]) => [p.fee, p.maxTime])).toEqual([
+            [10_000_000, (sync + 40_000) / 1000],
+            [80_000_000, (sync + 60_000) / 1000]
+        ])
+    })
 
     test('builds the update from the system account\'s current sequence at the given switch time', async () => {
         const {provider, buildUpdateTransaction, getAccountSequence} = load({
@@ -78,7 +78,7 @@ describe('checkUpdateBuilds', () => {
         }
 
         const {maxTime, fee} = buildUpdateTransaction.mock.calls[0][0]
-        expect(maxTime).toBe(1_800_000_150) //the switch time + 30 s, the first attempt's bound
+        expect(maxTime).toBe(1_800_000_160) //the switch time + 40 s, the first attempt's bound
         expect(Number.isInteger(maxTime)).toBe(true)
         expect(fee).toBe(10_000_000)
     })
