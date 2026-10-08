@@ -3,8 +3,8 @@ const {safeUrl} = require('../logger-cleanup')
 
 //The url that answered last, per configured url list (Soroban RPC and Horizon lists alike). Without it every request
 //walked the list in configured order, so a first url that hangs cost its whole deadline on every request. The same
-//helper lives in reflector-shared helpers/entries-helper.js, oracle-client src/rpc-helper.js, reflector-node
-//src/utils/rpc-helper.js and reflector-stellar-connector src/utils.js
+//helper lives in reflector-shared helpers/rpc-helper.js, reflector-node src/utils/rpc-helper.js and
+//reflector-stellar-connector src/utils.js
 const lastGoodUrls = new Map()
 //distinct url lists one process uses: an rpc and a horizon list per network
 const maxRememberedUrlLists = 16
