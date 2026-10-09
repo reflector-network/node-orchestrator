@@ -26,7 +26,7 @@ class HandlersManager {
         if (!handler.allowAnonymous && !channel.isValidated)
             throw new Error(`Message type ${message.type} is not allowed for anonymous channel`)
         if (!handler.allowedChannelTypes.includes(channel.type))
-            throw new Error(`Message type ${message.type} is not supported for channel ${channel}`)
+            throw new Error(`Message type ${message.type} is not supported for channel type ${channel.type}`)
         return await handler.handle(channel, message)
     }
 }

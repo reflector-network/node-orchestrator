@@ -9,6 +9,7 @@
  * @typedef {import('./notifications/notifications-manager')} NotificationsManager
  * @typedef {import('./statistics/statistics-manager')} StatisticsManager
  * @typedef {import('./statistics/tx-statistics-manager')} TxStatisticsManager
+ * @typedef {import('./log-token-provider').LogTokenProvider} LogTokenProvider
  */
 
 const packageInfo = require('../package.json')
@@ -69,6 +70,11 @@ class Container {
      * @type {TxStatisticsManager}
      */
     txStatisticsManager
+
+    /**
+     * @type {LogTokenProvider}
+     */
+    logTokenProvider
 
     /**
      * @type {string}

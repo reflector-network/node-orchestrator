@@ -1,4 +1,6 @@
+const net = require('net')
 const {StrKey} = require('@stellar/stellar-sdk')
+const {normalizeAddress} = require('../utils/client-address')
 
 class EmailSettings {
     constructor(rawSettings) {
@@ -34,6 +36,8 @@ class AppConfig {
         this.__assignEmailConfig(rawConfig.emailSettings)
         this.__assignMonitoringKey(rawConfig.monitoringKey)
         this.__assignLokiUrl(rawConfig.lokiUrl)
+        this.__assignLokiPushAuth(rawConfig.lokiPushAuth)
+        this.__assignTrustedProxies(rawConfig.trustedProxies)
     }
 
     /**
@@ -75,6 +79,19 @@ class AppConfig {
      * @type {string}
      */
     lokiUrl = null
+
+    /**
+     * 'required' refuses pushes without a valid token; 'optional' accepts them and exists only as a rollout escape hatch for nodes that do not issue tokens yet
+     * @type {'optional'|'required'}
+     */
+    lokiPushAuth = 'required'
+
+    /**
+     * Exact addresses of the reverse proxies allowed to name the client in `x-forwarded-for`, normalised. Empty means
+     * the socket peer is always the client address and the header is ignored.
+     * @type {string[]}
+     */
+    trustedProxies = []
 
     __assignDefaultNodes(defaultNodes) {
         if (!defaultNodes)
@@ -132,6 +149,27 @@ class AppConfig {
 
     __assignLokiUrl(lokiUrl) {
         this.lokiUrl = lokiUrl
+    }
+
+    __assignLokiPushAuth(lokiPushAuth) {
+        if (lokiPushAuth === undefined)
+            return
+        if (!['optional', 'required'].includes(lokiPushAuth))
+            throw new Error('lokiPushAuth must be "optional" or "required"')
+        this.lokiPushAuth = lokiPushAuth
+    }
+
+    __assignTrustedProxies(trustedProxies) {
+        if (trustedProxies === undefined)
+            return
+        if (!Array.isArray(trustedProxies))
+            throw new Error('trustedProxies must be an array of IP addresses')
+        this.trustedProxies = trustedProxies.map(entry => {
+            //exact addresses only: a range, a host name or a padded string is refused rather than guessed at
+            if (typeof entry !== 'string' || net.isIP(entry) === 0)
+                throw new Error(`trustedProxies entry ${JSON.stringify(entry)} is not an IP address`)
+            return normalizeAddress(entry)
+        })
     }
 }
 

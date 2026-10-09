@@ -6,11 +6,21 @@ const ConfigManager = require('./domain/config-manager')
 const HandlersManager = require('./server/ws/handlers/handlers-manager')
 const Server = require('./server')
 const ConnectionManager = require('./domain/connections-manager')
+const {LogTokenProvider} = require('./domain/log-token-provider')
 const NodeSettingsManager = require('./domain/node-settings-manager')
 const EmailProvider = require('./domain/email-provider')
 const NotificationManager = require('./domain/notifications/notifications-manager')
 const TxStatisticsManager = require('./domain/statistics/tx-statistics-manager')
 const StatisticsManager = require('./domain/statistics/statistics-manager')
+
+//registered first, so a failure during boot is logged through the rotating stream and exits with the intended code
+process.on('unhandledRejection', (reason) => {
+    logger.error({err: reason}, 'Unhandled rejection')
+})
+process.on('uncaughtException', (err) => {
+    logger.error({err}, 'Uncaught exception')
+    setTimeout(() => process.exit(13), 1000)
+})
 
 BigInt.prototype.toJSON = function () {
     return this.toString()
@@ -27,6 +37,7 @@ try {
     container.configManager = new ConfigManager()
     container.handlersManager = new HandlersManager()
     container.connectionManager = new ConnectionManager()
+    container.logTokenProvider = new LogTokenProvider()
     container.nodeSettingsManager = new NodeSettingsManager()
     container.emailProvider = new EmailProvider(container.appConfig.emailSettings)
     container.notificationsManager = new NotificationManager()
@@ -34,8 +45,14 @@ try {
     container.statisticsManager = new StatisticsManager()
     container.server = new Server()
 
-    require('./app')(container)
+    //startup is asynchronous past this point, so its failures need the same exit path as the synchronous ones above:
+    //a rejected boot must stop the process, not leave it running half-initialised
+    require('./app')(container).catch(abort)
 } catch (e) {
+    abort(e)
+}
+
+function abort(e) {
     if (logger)
         logger.error(e)
     else

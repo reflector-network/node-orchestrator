@@ -1,15 +1,20 @@
-const {Horizon, xdr} = require('@stellar/stellar-sdk')
-const container = require('../domain/container')
+const {Horizon, NotFoundError} = require('@stellar/stellar-sdk')
 const logger = require('../logger')
 const {makeServerRequest} = require('./request-helper')
 
+
+//an upstream that accepts the connection and never answers must count as a failure, so the next url is tried
+const horizonTimeout = 15000
 
 /**
  * @param {string} url - server URL
  * @returns {Horizon.Server}
  */
 function getServer(url) {
-    return new Horizon.Server(url, {allowHttp: true})
+    const server = new Horizon.Server(url, {allowHttp: true})
+    //sdk 17.0.1 forwards only the headers from the constructor options; the deadline has to live on the http client
+    server.httpClient.defaults.timeout = horizonTimeout
+    return server
 }
 
 /**
@@ -23,7 +28,7 @@ function getServer(url) {
  */
 async function getLastTransactionsForAccount(account, urls, lastLedger = 0, maxDepth = 24 * 60 * 60 * 1000) {
     /**
-     * @param {Horizon.Server} server
+     * @param {Horizon.Server} server - horizon server
      * @returns {Promise<any[]>}
      */
     const transactionsRequestFn = async (server) => {
@@ -66,13 +71,10 @@ async function getLastTransactionsForAccount(account, urls, lastLedger = 0, maxD
 }
 
 /**
- * Fetches transactions for a given account from Horizon servers, starting from a specified ledger.
- * The function handles pagination and ensures that it does not fetch transactions beyond the specified last ledger.
- * @param {string} account - The Stellar account ID for which to fetch transactions.
+ * Fetches every transaction from the ledger after `lastLedger` up to the current one.
  * @param {string[]} urls - An array of Horizon server URLs to query.
- * @param {number} lastLedger - The ledger number from which to start fetching transactions. Transactions from this ledger and earlier will be ignored.
- * @param {number} maxDepth - How long to go back in history, in milliseconds. Transactions older than (current time - maxDepth) will be ignored.
- * @returns {Promise<any[]>} - A promise that resolves to an array of transactions.
+ * @param {number} [lastLedger] - The ledger the previous scan finished at; 0 starts 100 ledgers back.
+ * @returns {Promise<{txs: any[], lastLedger: number}>}
  */
 async function getLastTransactions(urls, lastLedger = 0) {
 
@@ -87,8 +89,11 @@ async function getLastTransactions(urls, lastLedger = 0) {
         lastLedger = (await getLastLedger(urls)) - 100 //add some buffer
     }
 
+    //the cursor the attempt starts from; a retry against the next url must not inherit a partly advanced cursor
+    const startLedger = lastLedger
+
     /**
-     * @param {Horizon.Server} server
+     * @param {Horizon.Server} server - horizon server
      * @returns {Promise<{txs: any[], lastLedger: number}>}
      */
     const transactionsRequestFn = async (server) => {
@@ -96,16 +101,19 @@ async function getLastTransactions(urls, lastLedger = 0) {
         const txs = []
         const limit = 200
         let maxLedgerReached = false
+        let cursor = startLedger
         while (txs.length < maxTotalTxs && !maxLedgerReached) {
             //build the initial request
             let txsRequest = () => server.transactions()
-                .forLedger(lastLedger + 1)
+                .forLedger(cursor + 1)
                 .limit(limit)
                 .order('asc')
                 .call()
                 .catch(err => {
-                    if (err?.response?.status === 404) {
-                        //logger.trace({err, msg: `Ledger ${lastLedger} not found, assuming max ledger reached`})
+                    //the head of the chain: the sdk raises NotFoundError for an http 404 before it looks at the body, so
+                    //a proxy's bare or non-json 404 counts as well as horizon's problem document. err.response is only
+                    //that body, so its status field would miss both
+                    if (err instanceof NotFoundError) {
                         maxLedgerReached = true
                         return null
                     }
@@ -131,23 +139,27 @@ async function getLastTransactions(urls, lastLedger = 0) {
                 }
             }
             if (!maxLedgerReached)
-                lastLedger++
+                cursor++
         }
-        return {txs, lastLedger}
+        return {txs, lastLedger: cursor}
     }
 
     try {
         return await makeServerRequest(urls, getServer, transactionsRequestFn)
     } catch (err) {
         logger.error({err, msg: `Error fetching transactions`})
-        return {txs: [], lastLedger}
+        return {txs: [], lastLedger: startLedger} //nothing was processed, so the cursor stays put
     }
 }
 
+/**
+ * @param {string[]} urls - horizon urls
+ * @returns {Promise<number>} sequence of the latest ledger
+ */
 async function getLastLedger(urls) {
     /**
-     * @param {Horizon.Server}
-     * @return {Promise<number>}
+     * @param {Horizon.Server} server - horizon server
+     * @returns {Promise<number>}
      */
     const lastLedgerRequestFn = async (server) => {
         const ledger = await server.ledgers().order('desc').limit(1).call()
@@ -156,10 +168,15 @@ async function getLastLedger(urls) {
     return await makeServerRequest(urls, getServer, lastLedgerRequestFn)
 }
 
+/**
+ * @param {string[]} urls - horizon urls
+ * @param {number} ledgerSequence - ledger to look up
+ * @returns {Promise<Date>} close time of that ledger
+ */
 async function getLedgerCloseTime(urls, ledgerSequence) {
     /**
-     * @param {Horizon.Server}
-     * @return {Promise<>}
+     * @param {Horizon.Server} server - horizon server
+     * @returns {Promise<Date>}
      */
     const lastLedgerRequestFn = async (server) => {
         const ledger = await server.ledgers().ledger(ledgerSequence).call()
@@ -170,5 +187,6 @@ async function getLedgerCloseTime(urls, ledgerSequence) {
 
 module.exports = {
     getLastTransactionsForAccount,
-    getLastTransactions
+    getLastTransactions,
+    getServer
 }

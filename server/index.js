@@ -3,20 +3,38 @@ const express = require('express')
 const bodyParser = require('body-parser')
 const {WebSocketServer} = require('ws')
 const {ValidationError} = require('@reflector/reflector-shared')
-const {StrKey} = require('@stellar/stellar-sdk')
-const {createProxyMiddleware} = require('http-proxy-middleware')
 const logger = require('../logger')
 const container = require('../domain/container')
-const MessageTypes = require('./ws/handlers/message-types')
 const registerSwaggerRoute = require('./swagger')
-const {HttpError, badRequest} = require('./errors')
+const {HttpError, badRequest, fromRelayError} = require('./errors')
+const {logAuthFailure} = require('./auth-failure-log')
 const configRoutes = require('./routes/config-routes')
-const IncomingChannel = require('./ws/incoming-channel')
-const AnonIncomingChannel = require('./ws/anon-incoming-channel')
+const registerLokiProxy = require('./loki-proxy').registerLokiProxy
+const {handleConnection, isNodeUpgrade, nodeWsServerOptions, wsServerOptions} = require('./ws/connection-handler')
 const statisticsRoutes = require('./routes/statistics-routes')
 const logRoutes = require('./routes/log-routes')
 const settingsRoutes = require('./routes/node-settings-routes')
 const subscriptionRoutes = require('./routes/subscription-routes')
+
+/**
+ * Logs a failed request at the level its cause deserves: a refused credential at warn, because a stream of them
+ * needs an operator's attention; a node that refused, timed out or is gone at warn, because it is the node's
+ * condition rather than the orchestrator's; any other 4xx at debug; everything else at error
+ * @param {object} req - request
+ * @param {Error} err - error the request failed with
+ */
+function logRequestError(req, err) {
+    if (err.code === 401 || err.code === 403)
+        logAuthFailure(req, err)
+    else if (err.code >= 400 && err.code < 500) //routine: an unknown node, malformed input; no stack worth keeping
+        logger.debug(`${req.method} ${req.originalUrl} -> ${err.code}: ${err.message}`)
+    else if (err.isRelayError)
+        logger.warn(`${req.method} ${req.originalUrl} -> ${err.code}: ${err.message}`)
+    else if (process.env.NODE_ENV === 'test')
+        logger.error(err.message)
+    else
+        logger.error(err)
+}
 
 function normalizePort(val) {
     const port = parseInt(val, 10)
@@ -47,48 +65,20 @@ class Server {
         settingsRoutes(this.app)
         subscriptionRoutes(this.app)
 
-        if (container.appConfig.lokiUrl) {
-            const proxyMiddleware = createProxyMiddleware({
-                target: container.appConfig.lokiUrl,
-                changeOrigin: true
-            })
+        registerLokiProxy(this.app, container.appConfig.lokiUrl)
 
-            this.app.use('/loki-proxy', proxyMiddleware)
-        }
-
-        const wss = new WebSocketServer({noServer: true})
-
-        wss.on('connection', async function connection(ws, req) {
-            try {
-                const {pubkey, app} = req.headers
-                let connection = null
-                if (pubkey) {
-                    if (!StrKey.isValidEd25519PublicKey(pubkey))
-                        throw new ValidationError('pubkey is invalid')
-                    if (!container.configManager.hasNode(pubkey))
-                        throw new ValidationError('pubkey is not registered')
-                    connection = new IncomingChannel(ws, pubkey, app === 'node')
-                    await connection.send({type: MessageTypes.HANDSHAKE_REQUEST, data: {payload: connection.authPayload}})
-                } else {
-                    connection = new AnonIncomingChannel(ws, req.headers['x-forwarded-for'] || req.socket.remoteAddress)
-                }
-                container.connectionManager.add(connection)
-                logger.debug(`New connection from ${connection.ip || connection.pubkey} established`)
-            } catch (e) {
-                if (!(e instanceof ValidationError))
-                    logger.error(e)
-                ws.close(1008, e.message)
-            }
-        })
+        //two servers because ws fixes the frame cap per server: nodes answer with whole log files, anonymous clients
+        //only listen, so they keep the small cap
+        const wss = new WebSocketServer(wsServerOptions)
+        const nodeWss = new WebSocketServer(nodeWsServerOptions)
+        for (const wsServer of [wss, nodeWss])
+            wsServer.on('connection', (ws, req) => handleConnection(ws, req))
 
         //error handler
         this.app.use((err, req, res, next) => {
             if (err) {
-                if (process.env.NODE_ENV === 'test')
-                    logger.error(err.message)
-                else
-                    logger.error(err)
-
+                err = fromRelayError(err) || err
+                logRequestError(req, err)
                 if (res.headersSent)
                     return next(err)
                 if (err instanceof ValidationError)
@@ -96,8 +86,7 @@ class Server {
                 if (err instanceof HttpError)
                     return res.status(err.code).json({error: err.message, status: err.code})
                 //unhandled error
-                logger.error(err)
-                res.status(500).json({error: 'Internal server error', status: 500})
+                return res.status(500).json({error: 'Internal server error', status: 500})
             }
             res.status((err && err.code) || 500).end()
         })
@@ -131,8 +120,9 @@ class Server {
 
         //Integrate WebSocket server with HTTP server
         this.server.on('upgrade', (request, socket, head) => {
-            wss.handleUpgrade(request, socket, head, (ws) => {
-                wss.emit('connection', ws, request)
+            const target = isNodeUpgrade(request) ? nodeWss : wss
+            target.handleUpgrade(request, socket, head, (ws) => {
+                target.emit('connection', ws, request)
             })
         })
     }

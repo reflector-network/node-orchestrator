@@ -33,6 +33,9 @@ const minAgeMsByType = {
     WRONG_PENDING_CONFIG: hoursToMs(0.1)
 }
 
+//how long an item is kept after its last send, or while it has never been sent
+const retentionMs = hoursToMs(24 * 7)
+
 class NotificationItem {
     constructor({category, scope, type, message, recipient, firstSeenAt, dedupKey, throttleHoursOverride}) {
         this.category = category
@@ -44,15 +47,29 @@ class NotificationItem {
         this.dedupKey = dedupKey
         this.throttleHoursOverride = throttleHoursOverride
         this.notificationTimestamp = 0
+        //set when the issue went away after a mail went out: the item stays, unsent, until its throttle window passes, so
+        //an issue that flaps does not mail on every return
+        this.cleared = false
+        //when this process took the item in. firstSeenAt cannot stand in for it: a DAO event or a price round read on
+        //catch-up carries its ledger or round time, which can already be more than a week old
+        this.receivedAt = Date.now()
+    }
+
+    /**
+     * @returns {number} how long after a send the item may not be sent again, in ms
+     */
+    get throttleMs() {
+        return hoursToMs(this.throttleHoursOverride ?? throttleHoursByType[this.type] ?? 24)
     }
 
     shouldSend() {
+        if (this.cleared)
+            return false
         const now = Date.now()
         const minAge = minAgeMsByType[this.type] || 0
         if (now - this.firstSeenAt < minAge)
             return false
-        const throttleHours = this.throttleHoursOverride ?? throttleHoursByType[this.type] ?? 24
-        return now - this.notificationTimestamp > hoursToMs(throttleHours)
+        return now - this.notificationTimestamp > this.throttleMs
     }
 
     setNotificationSent() {
@@ -66,9 +83,18 @@ class NotificationsManager {
      */
     __items = new Map()
 
+    /**
+     * @type {Promise<void>|null} the flush currently in flight, shared by both timer loops
+     */
+    __flushing = null
+
     report(event) {
         const existing = this.__items.get(event.dedupKey)
         if (existing) {
+            if (existing.cleared) { //back inside the window of its last mail: that mail still throttles it
+                existing.cleared = false
+                existing.firstSeenAt = event.firstSeenAt //a new occurrence, which must age again where a type asks for it
+            }
             existing.message = event.message
             existing.recipient = event.recipient
             return
@@ -76,11 +102,39 @@ class NotificationsManager {
         this.__items.set(event.dedupKey, new NotificationItem(event))
     }
 
+    /**
+     * The issue went away. An item that was never sent is dropped. One that was sent, or may be by a flush in flight,
+     * is kept as a tombstone that is not sent: deleting it would forget when it last mailed, so an issue that clears
+     * and returns every other round would mail on every return. A report revives it and the sweep drops it once
+     * its throttle window has passed
+     * @param {string} dedupKey - key of the issue that went away
+     */
     clear(dedupKey) {
-        this.__items.delete(dedupKey)
+        const item = this.__items.get(dedupKey)
+        if (!item)
+            return
+        if (item.notificationTimestamp > 0 || this.__flushing)
+            item.cleared = true
+        else
+            this.__items.delete(dedupKey)
     }
 
-    async flush() {
+    /**
+     * Send every item that is due, grouped by recipient. A call made while a flush is in flight gets that flush's
+     * promise instead of starting a second pass: items are marked sent only once their send settles, so an overlapping
+     * pass would select and send them again. An item reported meanwhile goes out with the next flush
+     * @returns {Promise<void>}
+     */
+    flush() {
+        if (this.__flushing)
+            return this.__flushing
+        this.__flushing = this.__flush().finally(() => {
+            this.__flushing = null
+        })
+        return this.__flushing
+    }
+
+    async __flush() {
         const byRecipient = new Map()
         for (const item of this.__items.values()) {
             if (!item.shouldSend())
@@ -106,7 +160,14 @@ class NotificationsManager {
             return null
         switch (recipient.kind) {
             case 'pubkey':
-                return recipient.pubkey ? 'pubkey:' + recipient.pubkey : null
+                if (!recipient.pubkey)
+                    return null
+                //an item raised while the node was a member is not sent once it has left the cluster
+                if (!container.configManager.hasNode(recipient.pubkey)) {
+                    logger.debug('NotificationsManager: ' + recipient.pubkey + ' is not in the cluster, skipping delivery')
+                    return null
+                }
+                return 'pubkey:' + recipient.pubkey
             case 'all':
                 return 'all'
             case 'monitoring': {
@@ -167,9 +228,20 @@ class NotificationsManager {
     }
 
     __sweepExpired() {
-        const cutoff = Date.now() - hoursToMs(24 * 7)
+        const now = Date.now()
+        const cutoff = now - retentionMs
         for (const [key, item] of this.__items.entries()) {
-            if (item.notificationTimestamp > 0 && item.notificationTimestamp < cutoff)
+            //a tombstone only remembers a send that throttles a return; with none, or once its window passed, it goes
+            if (item.cleared && (item.notificationTimestamp === 0 || now - item.notificationTimestamp > item.throttleMs)) {
+                this.__items.delete(key)
+                continue
+            }
+            //an item that was never sent - its recipient never resolves, or every send failed - is dropped once it has
+            //been held for the same window, rather than kept for the life of the process
+            const expired = item.notificationTimestamp > 0
+                ? item.notificationTimestamp < cutoff
+                : item.receivedAt < cutoff
+            if (expired)
                 this.__items.delete(key)
         }
     }

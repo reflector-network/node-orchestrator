@@ -13,8 +13,8 @@ function configRoutes(app) {
      *       - Config
      *     parameters:
      *       - in: query
-     *         name: limit
-     *         description: Limit
+     *         name: pageSize
+     *         description: Page size, 1-100
      *         schema:
      *           type: integer
      *       - in: query
@@ -35,15 +35,16 @@ function configRoutes(app) {
      *           type: string
      *     responses:
      *       200:
-     *         description: Config
+     *         description: Config envelopes, newest first
      *         content:
      *           application/json:
      *             schema:
      *               type: array
      *               items:
-     *                 $ref: '#/components/schemas/Config'
+     *                 $ref: '#/components/schemas/ConfigEnvelope'
      */
-    registerRoute(app, 'config/history', {method: 'get'}, async (req) => await container.configManager.history(req.query, !!req.pubkey))
+    //the route requires a registered node key, and node keys already hold clusterSecret, so there is no public view
+    registerRoute(app, 'config/history', {method: 'get'}, async (req) => await container.configManager.history(req.query))
 
     /**
      * @openapi
@@ -103,8 +104,8 @@ function configRoutes(app) {
      *       404:
      *         description: Config not found
      */
-    registerRoute(app, 'config', {method: 'post'}, async (req, res) => {
-        await container.configManager.create(req.body)
+    registerRoute(app, 'config', {method: 'post'}, async (req) => {
+        await container.configManager.create(req.body, req.pubkey)
         return {ok: 1}
     })
 

@@ -75,3 +75,10 @@ describe('HandlersManager', () => {
         expect(h.allowedChannelTypes).not.toContain(undefined)
     })
 })
+
+test('an unsupported channel type is reported by number, not by the channel object', async () => {
+    const manager = new HandlersManager()
+    const channel = {type: ChannelTypes.ANON, isValidated: true, toString: () => 'should not be used'}
+    await expect(manager.handle(channel, {type: MessageTypes.CONFIG_REQUEST}))
+        .rejects.toThrow(`Message type ${MessageTypes.CONFIG_REQUEST} is not supported for channel type ${ChannelTypes.ANON}`)
+})

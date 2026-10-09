@@ -2,27 +2,32 @@
 const {
     ConfigEnvelope,
     buildUpdates,
-    verifySignature,
     ValidationError,
     sortObjectKeys,
     isTimestampValid,
     normalizeTimestamp,
     UpdateType,
     areAllSignaturesPresent,
-    ContractTypes
+    ContractTypes,
+    simulationRejectedCode
 } = require('@reflector/reflector-shared')
-const mongoose = require('mongoose')
+const {StrKey} = require('@stellar/stellar-sdk')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const ChannelTypes = require('../server/ws/channel-types')
+const {serviceUnavailable} = require('../server/errors')
 const logger = require('../logger')
 const {getUpdateTx, getAccountSequence} = require('../utils/rpc-helper')
 const ConfigStatus = require('./config-status')
-const {computeUpdateStatus} = require('./utils')
+const nonceProvider = require('./nonce-provider')
+const {computeUpdateStatus, stripRejectedSignatures, parseBoundedInt} = require('./utils')
 const notificationProvider = require('./notification-provider')
 const container = require('./container')
 const {setManagers} = require('./subscription-data-provider')
-const {getUpdateTxHash, maxSubmitAttempts} = require('./blockchain-data-provider')
+const {getUpdateTxHash, checkUpdateBuilds, maxSubmitAttempts} = require('./blockchain-data-provider')
+//endsBeforeExpiration: at the expiration date the orchestrator rejects a PENDING update, so a round must be over
+//by then. The nodes apply the same rule to every round they build, from the expiration date getConfigMessage sends
+const {isUpdateTimeReached, syncTimeframe, endsBeforeExpiration} = require('@reflector/reflector-shared')
 
 /**
  * @typedef {import('./types').ConfigEnvelopeDto} ConfigEnvelopeDto
@@ -131,17 +136,84 @@ class ConfigItem {
     }
 }
 
+//submissions are serialised through this queue: two first proposals arriving together would both see no pending
+//config and both create one, leaving a second VOTING document for init() to pick up after a restart
+let __createQueue = Promise.resolve()
+
+/**
+ * Burns the envelope-signature nonce of a signer. Signatures are handed to every node and to anonymous dashboard
+ * subscribers, so each one is accepted exactly once: the signer's next signature must carry a higher nonce.
+ * The caller has already range-checked the nonce, so this only compares it with the stored one.
+ * @param {string} pubkey - signer public key
+ * @param {number} nonce - nonce carried by the signature
+ * @returns {Promise<void>}
+ */
+async function consumeSignatureNonce(pubkey, nonce) {
+    const lastNonce = await nonceProvider.getSignatureNonce(pubkey)
+    if (nonce <= lastNonce)
+        throw new ValidationError('Signature nonce is outdated')
+    await nonceProvider.updateSignatureNonce(pubkey, nonce)
+}
+
+/**
+ * The public view of an envelope for anonymous subscribers: no cluster secret, no node urls and no signatures
+ * (a leaked signature can be replayed onto another proposal with the same payload).
+ * @param {ConfigItem} configItem - config item to publish
+ * @returns {object|null}
+ */
+function getAnonymousUpdate(configItem) {
+    const config = cleanupConfig(configItem?.toPlainObject())
+    if (!config)
+        return null
+    delete config.signatures
+    return config
+}
+
+const maxHistoryPageSize = 100
+
+/**
+ * Turn the raw query of GET /config/history into a safe Mongo filter
+ * @param {any} filter - raw req.query
+ * @returns {{query: object, page: number, pageSize: number}}
+ */
+function buildHistoryQuery(filter) {
+    const query = {}
+    const status = filter?.status
+    if (status !== undefined) {
+        if (typeof status !== 'string' || !Object.values(ConfigStatus).includes(status))
+            throw new ValidationError('Invalid status filter')
+        query.status = status
+    }
+    const initiator = filter?.initiator
+    if (initiator !== undefined) {
+        if (typeof initiator !== 'string' || !StrKey.isValidEd25519PublicKey(initiator))
+            throw new ValidationError('Invalid initiator filter')
+        query['signatures.0.pubkey'] = initiator
+    }
+    return {
+        query,
+        page: parseBoundedInt(filter?.page, 1, 1, Number.MAX_SAFE_INTEGER),
+        pageSize: parseBoundedInt(filter?.pageSize, 10, 1, maxHistoryPageSize)
+    }
+}
+
 class ConfigManager {
     /**
      * @param {string[]} defaultNodes - The default node pubkeys
      * @returns {Promise<void>}
      */
     async init(defaultNodes) {
-        const currentConfigDoc = await ConfigEnvelopeModel.findOne({status: ConfigStatus.APPLIED}).exec()
-        if (currentConfigDoc) {
-            setCurrentConfig(new ConfigItem(currentConfigDoc.toPlainObject()))
+        //newest first, so an interrupted apply step resolves to the envelope that was applied last
+        const appliedDocs = await ConfigEnvelopeModel.find({status: ConfigStatus.APPLIED}).sort({updatedAt: -1}).exec()
+        if (appliedDocs.length > 0) {
+            setCurrentConfig(new ConfigItem(appliedDocs[0].toPlainObject()))
             if (!__currentConfig.envelope.config.isValid) {
                 throw new Error(`Current config is invalid. ${__currentConfig.envelope.config.issuesString}`)
+            }
+            for (const staleDoc of appliedDocs.slice(1)) {
+                const staleId = staleDoc.toPlainObject().id
+                logger.warn(`Found a superseded applied config ${staleId}; marking it replaced`)
+                await ConfigEnvelopeModel.findByIdAndUpdate(staleId, {status: ConfigStatus.REPLACED}).exec()
             }
         }
         const pendingConfigDoc = await ConfigEnvelopeModel.findOne({status: {$in: [ConfigStatus.PENDING, ConfigStatus.VOTING]}}).exec()
@@ -170,35 +242,38 @@ class ConfigManager {
         }
     }
     /**
-     * @param {{ status: string, initiator: string, page: number, pageSize: number }} filter - The filter
-     * @param {boolean} onlyPublicFields - Flag to return only public fields
+     * Configuration history for a registered node key. Envelopes are returned in full: the route authenticates, and
+     * every node key already receives `clusterSecret` over the `CONFIG` message.
+     * @param {{status: string, initiator: string, page: number, pageSize: number}} filter - raw req.query
      * @returns {Promise<ConfigEnvelopeDto[]>}
      */
-    async history(filter, onlyPublicFields) {
-        const query = {}
-        if (filter?.status)
-            query.status = filter.status
-        if (filter?.initiator)
-            query['signatures.0.pubkey'] = filter.initiator
-
-        const page = filter?.page || 1
-        const pageSize = filter?.pageSize || 10
-        const skip = (page > 0 ? page - 1 : page) * pageSize
+    async history(filter) {
+        const {query, page, pageSize} = buildHistoryQuery(filter)
+        const skip = (page - 1) * pageSize
 
         const configDocs = await ConfigEnvelopeModel.find(query).sort({createdAt: -1}).skip(skip).limit(pageSize).exec()
-        return configDocs.map(d => {
-            const plainObject = d.toPlainObject()
-            if (onlyPublicFields)
-                cleanupConfig(plainObject)
-            return plainObject
-        })
+        return configDocs.map(d => d.toPlainObject())
     }
     /**
-     *
+     * Submits an envelope. Submissions run one at a time: the whole method is a read-modify-write over the pending
+     * config, and two proposals arriving together would otherwise both create one.
      * @param {any} rawConfigEnvelope - The raw config envelope
+     * @param {string} submitterPubkey - Public key of the authenticated caller (`req.pubkey`)
      * @returns {Promise<any>}
      */
-    async create(rawConfigEnvelope) {
+    create(rawConfigEnvelope, submitterPubkey) {
+        const run = __createQueue.then(() => this.__create(rawConfigEnvelope, submitterPubkey))
+        //a rejected submission must not poison the queue for the next caller
+        __createQueue = run.catch(() => {})
+        return run
+    }
+
+    /**
+     * @param {any} rawConfigEnvelope - The raw config envelope
+     * @param {string} submitterPubkey - Public key of the authenticated caller (`req.pubkey`)
+     * @returns {Promise<any>}
+     */
+    async __create(rawConfigEnvelope, submitterPubkey) {
         if (!rawConfigEnvelope)
             throw new ValidationError('Config is not defined')
 
@@ -210,13 +285,28 @@ class ConfigManager {
         if (!config.isValid)
             throw new ValidationError(`Invalid config. ${config.issuesString}`)
 
-        const {pubkey, signature, nonce, rejected} = configItem.envelope.signatures[0]
-        if (!config.nodes.has(pubkey))
+        const {pubkey, nonce, rejected} = configItem.envelope.signatures[0]
+        //a vote is attributable: one node cannot submit another node's signature
+        if (!submitterPubkey || pubkey !== submitterPubkey)
+            throw new ValidationError('Envelope must be signed by the authenticated caller')
+        //the range check runs before signature verification: a nonce mutated after signing must be reported as a bad
+        //nonce, not as a bad signature, and it must stay ahead of the verifier on the next line
+        if (!Number.isSafeInteger(nonce) || nonce <= 0)
+            throw new ValidationError('Signature nonce is not a valid number')
+        //the single verifier shared with the nodes: membership is checked against the CURRENT cluster, so a node this
+        //proposal adds cannot vote on its own admission while a node it removes still can
+        const verification = configItem.envelope.verifySignatures(this.allNodePubkeys())
+        if (verification.unknown.length > 0)
             throw new ValidationError('Signature pubkey doesn\'t exist in config nodes')
-        if (!verifySignature(pubkey, signature, config.getSignaturePayloadHash(pubkey, nonce, rejected)))
+        if (!verification.valid)
             throw new ValidationError('Invalid signature')
+        await consumeSignatureNonce(pubkey, nonce)
 
         const {configToModify, signatureIndex} = getConfigToModify(configItem) || {}
+        //a new signature cannot drop a PENDING update, a changed one can
+        if (configToModify === __pendingConfig && configToModify.status === ConfigStatus.PENDING && signatureIndex >= 0
+            && isRoundInFlight(configToModify, Date.now()))
+            throw new ValidationError('An update round is in progress, try again in a minute')
         if (configToModify) {
             const resultConfig = await updateConfig(
                 configToModify,
@@ -226,7 +316,8 @@ class ConfigManager {
                 !__currentConfig
             )
             updateItems(this.allNodePubkeys())
-            notificationProvider.notify({type: 'config-updated', data: cleanupConfig(resultConfig.toPlainObject())}, ChannelTypes.ANON)
+            wakePendingConfigProcessing(this)
+            notificationProvider.notify({type: 'config-updated', data: getAnonymousUpdate(resultConfig)}, ChannelTypes.ANON)
             return
         }
 
@@ -241,11 +332,13 @@ class ConfigManager {
             throw new ValidationError('Config min date is not valid. It should be rounded to seconds')
         if (configItem.envelope.timestamp && configItem.envelope.timestamp < config.minDate)
             throw new ValidationError('Config timestamp cannot be less than min date')
-        if (configItem.envelope.timestamp && configItem.envelope.timestamp > configItem.expirationDate)
-            throw new ValidationError('Config timestamp cannot be greater than expiration date')
+        //judged on the switch time the update will get, rounded up onto the sync grid (getTimestamp)
+        if (configItem.envelope.timestamp && !endsBeforeExpiration(getTimestamp(configItem.envelope.timestamp), configItem.expirationDate))
+            throw new ValidationError('Config timestamp leaves no time to apply the update before the expiration date')
         if (configItem.envelope.timestamp && !isTimestampValid(configItem.envelope.timestamp, 1000))
             throw new ValidationError('Config timestamp is not valid. It should be rounded to seconds')
         let isBlockchainUpdate = false
+        let invokesContract = false
         if (__currentConfig) {
             const updates = buildUpdates(1n, __currentConfig.envelope.config, config)
             if (updates.size === 0)
@@ -256,17 +349,21 @@ class ConfigManager {
                     const currentNodes = [...update.currentNodes.keys()]
                     if (newNodes.length === currentNodes.length && newNodes.every(n => currentNodes.includes(n)))
                         continue
-                }
+                } else
+                    invokesContract = true //every update but a node set change calls a contract
                 isBlockchainUpdate = true
             }
         }
         if (rejected)
             throw new ValidationError('Rejected signature cannot be used to create config')
+        if (invokesContract)
+            await assertUpdateBuilds(config, getTimestamp(configItem.envelope.timestamp, config.minDate))
 
         __pendingConfig = await createConfig(configItem, this.allNodePubkeys().length, !__currentConfig, isBlockchainUpdate)
 
         updateItems(this.allNodePubkeys())
-        notificationProvider.notify({type: 'config-created', data: cleanupConfig(configItem.toPlainObject())}, ChannelTypes.ANON)
+        wakePendingConfigProcessing(this)
+        notificationProvider.notify({type: 'config-created', data: getAnonymousUpdate(configItem)}, ChannelTypes.ANON)
 
     }
     /**
@@ -296,14 +393,67 @@ class ConfigManager {
     }
 }
 
+//how long before a round's tick a vote change is already refused: the update must not be dropped while the nodes are
+//about to build it
+const roundLeadTime = 15_000
+
+/**
+ * Whether a round of a PENDING update runs now or starts within roundLeadTime. A round starts at every sync tick from
+ * the switch time on (every tick when early submission is allowed) and is over after its last attempt's maxTime and the
+ * orchestrator's poll a second past it. Dropping the update inside that span would leave the nodes holding a signed
+ * transaction that can still land after the orchestrator rejected the update
+ * @param {ConfigItem} pendingConfig - the PENDING update
+ * @param {number} now - current time in milliseconds
+ * @returns {boolean}
+ */
+function isRoundInFlight(pendingConfig, now) {
+    //the latest tick whose round could cover now: rounds end long before the next tick's lead time begins
+    const tick = Math.floor((now + roundLeadTime) / syncTimeframe) * syncTimeframe
+    if (endsBeforeExpiration(tick, now)) //the same end of a round that bounds it by the expiration date
+        return false
+    return pendingConfig.envelope.allowEarlySubmission || isUpdateTimeReached(pendingConfig.envelope.timestamp, tick)
+}
+
+const maxBuildFailureLength = 500
+
+/**
+ * Builds the transaction of a new proposal once, which simulates its contract call. An update whose call fails would
+ * stay PENDING until it expires and block every other proposal meanwhile, so it is refused before anyone votes. A
+ * change on chain between now and the switch time can still make the round fail. Only a host refusal of the call
+ * (reflector-shared marks it with simulationRejectedCode) or an invalid update is a refusal; a check that could not run
+ * - an rpc that did not answer, or reported an error of its own - says nothing about the proposal, so the reply asks to
+ * submit it again instead
+ * @param {Config} newConfig - proposed config
+ * @param {number} timestamp - switch time the update would get
+ * @returns {Promise<void>}
+ */
+async function assertUpdateBuilds(newConfig, timestamp) {
+    try {
+        await checkUpdateBuilds(__currentConfig.envelope.config, newConfig, timestamp)
+    } catch (err) {
+        //the reply carries the top-level message only: the causes of an rpc failure can name a provider url
+        const reason = err.message.length > maxBuildFailureLength ? err.message.slice(0, maxBuildFailureLength) + '...' : err.message
+        if ((!!err.code && err.code === simulationRejectedCode) || err instanceof ValidationError) {
+            logger.warn({err}, 'Refused a proposal whose update transaction cannot be built')
+            throw new ValidationError(`The update transaction cannot be built: ${reason}`)
+        }
+        logger.warn({err}, 'Could not check whether a proposal\'s update transaction builds')
+        throw serviceUnavailable(`The update transaction could not be checked right now, submit the proposal again: ${reason}`)
+    }
+}
+
 function getConfigMessage() {
+    //the expiration date travels beside the envelope as unsigned metadata, so a node can skip a round that would end
+    //after it. It is outside every signed payload and ConfigEnvelope drops it, so a node that does not know
+    //it is unaffected; a wrong value can only make a node abstain from a round, never change what it signs
+    const pendingConfig = __pendingConfig?.status === ConfigStatus.PENDING
+        ? {...__pendingConfig.envelope.toPlainObject(), expirationDate: __pendingConfig.expirationDate}
+        : undefined
     return {
         type: MessageTypes.CONFIG,
         data: {
-            currentConfig: __currentConfig?.envelope.toPlainObject(),
-            pendingConfig: __pendingConfig && __pendingConfig.status !== ConfigStatus.PENDING
-                ? undefined
-                : __pendingConfig?.envelope.toPlainObject()
+            currentConfig: stripRejectedSignatures(__currentConfig?.envelope.toPlainObject()),
+            pendingConfig: stripRejectedSignatures(pendingConfig)
         }
     }
 }
@@ -336,6 +486,7 @@ async function updateItems(allNodePubkeys) {
             //close all connections for removed nodes
             getRemovedNodes(allNodePubkeys).forEach(pubkey => {
                 container.connectionManager.removeByPubkey(pubkey)
+                container.logTokenProvider.revoke(pubkey)
             })
             setCurrentConfig(__pendingConfig)
             __pendingConfig = null
@@ -361,7 +512,19 @@ function getRemovedNodes(currentNodePubkeys) {
     return removedNodes
 }
 
-const updateIdleTimeframe = 1000 * 60 * 2 //2 minutes
+async function rejectPendingConfig() {
+    await ConfigEnvelopeModel.findOneAndUpdate(
+        {_id: __pendingConfig.id},
+        {status: ConfigStatus.REJECTED},
+        {new: true}
+    ).exec()
+    __pendingConfig.status = ConfigStatus.REJECTED
+}
+
+const updateIdleTimeframe = syncTimeframe //2 minutes, the sync grid of the shared update schedule
+//two ticks, so a default switch time stays on the grid and leaves every node two to four minutes to see the PENDING
+//envelope before it executes
+const updateGracePeriod = 2 * updateIdleTimeframe
 
 function isPendingConfigExpired() {
     return __pendingConfig.envelope.timestamp < Date.now()
@@ -373,36 +536,64 @@ function getNextSyncTimestamp(timestamp) {
     return __pendingConfig.envelope.timestamp
 }
 
+//the loop sleeps until the next moment the pending config needs it, judged from the update pending when it last ran
+let __processTimer = null
+let __processing = false
+
+/**
+ * Runs the pending config loop now instead of at the time it set for itself. A vote can withdraw the update the loop
+ * sleeps for and make another one pending with an earlier switch time; without a wake that update would wait for the
+ * old switch time while the nodes apply it on their own. A running pass is left alone: it re-arms from the current
+ * state when it ends
+ * @param {ConfigManager} configManager - the config manager the loop serves
+ */
+function wakePendingConfigProcessing(configManager) {
+    if (__processing)
+        return
+    clearTimeout(__processTimer)
+    __processTimer = setTimeout(() => processPendingConfig(configManager, normalizeTimestamp(Date.now(), updateIdleTimeframe)), 0)
+}
+
 /**
  * @param {ConfigManager} configManager
  * @param {number} syncTimestamp
  */
 async function processPendingConfig(configManager, syncTimestamp) {
     let timeout = 5000
+    __processing = true
     try {
         if (!__pendingConfig)
             return
         switch (__pendingConfig.status) {
             case ConfigStatus.VOTING:
                 {
-                    if (__pendingConfig.expirationDate < Date.now()) {
-                        //reject expired voting updates
-                        await ConfigEnvelopeModel.findOneAndUpdate(
-                            {_id: __pendingConfig.id},
-                            {status: ConfigStatus.REJECTED},
-                            {new: true}
-                        ).exec()
-                        __pendingConfig.status = ConfigStatus.REJECTED
-                    }
+                    if (__pendingConfig.expirationDate < Date.now()) //reject expired voting updates
+                        await rejectPendingConfig()
                 }
                 break
-            case ConfigStatus.PENDING: //try to apply expired pending updates
+            case ConfigStatus.PENDING: //apply pending updates whose time has come; drop the ones that expired
                 {
-                    const updateTimeReached = __pendingConfig.envelope.timestamp < syncTimestamp
+                    if (__pendingConfig.expirationDate < Date.now()) {
+                        await rejectPendingConfig()
+                        break
+                    }
+                    //inclusive, as reflector-node's ClusterRunner decides it: both sides build the update at the tick
+                    //equal to its switch time
+                    const updateTimeReached = isUpdateTimeReached(__pendingConfig.envelope.timestamp, syncTimestamp)
                     if (!(updateTimeReached || __pendingConfig.envelope.allowEarlySubmission))
                         return
 
                     if (!updateTimeReached) { //if update time is not reached, check if all signatures are present
+                        //allowEarlySubmission is not signed, so it may skip the derived execution slot but never the
+                        //signed minDate. Nodes judge this on their tick, not the wall clock (reflector-node
+                        //cluster-runner.js: `timestamp < minDate`), so this must match on the sync tick too - or it
+                        //polls for a transaction nobody builds. Changing this requires changing both sides in the
+                        //same release
+                        const {minDate} = __pendingConfig.envelope.config
+                        if (minDate && syncTimestamp < minDate) {
+                            logger.debug({msg: 'Early submission is not allowed before the signed minDate', minDate})
+                            return
+                        }
                         if (!areAllSignaturesPresent(
                             [...__currentConfig.envelope.config.nodes.keys()],
                             [...__pendingConfig.envelope.config.nodes.keys()],
@@ -424,22 +615,15 @@ async function processPendingConfig(configManager, syncTimestamp) {
                         }
                     }
                     if (__currentConfig) {
-                        const session = await mongoose.startSession()
-                        session.startTransaction()
-                        try {
-                            await ConfigEnvelopeModel.findByIdAndUpdate({_id: __currentConfig.id}, {status: ConfigStatus.REPLACED}).exec()
-                            await ConfigEnvelopeModel.findByIdAndUpdate(
-                                {_id: __pendingConfig.id},
-                                {status: ConfigStatus.APPLIED, txHash: __pendingConfig.txHash}
-                            ).exec()
-                            await session.commitTransaction()
-                            __pendingConfig.status = ConfigStatus.APPLIED
-                        } catch (error) {
-                            await session.abortTransaction()
-                            throw error
-                        } finally {
-                            await session.endSession()
-                        }
+                        //no multi-document transactions on a standalone mongod, so the pair is ordered instead: the new
+                        //envelope becomes APPLIED first, the superseded one REPLACED second. A crash in between leaves two
+                        //APPLIED documents, which init() repairs, rather than none at all
+                        await ConfigEnvelopeModel.findByIdAndUpdate(
+                            __pendingConfig.id,
+                            {status: ConfigStatus.APPLIED, txHash: __pendingConfig.txHash}
+                        ).exec()
+                        await ConfigEnvelopeModel.findByIdAndUpdate(__currentConfig.id, {status: ConfigStatus.REPLACED}).exec()
+                        __pendingConfig.status = ConfigStatus.APPLIED
                     }
                 }
                 break
@@ -449,7 +633,7 @@ async function processPendingConfig(configManager, syncTimestamp) {
         }
         updateItems(configManager.allNodePubkeys())
         if (__currentConfig)
-            notificationProvider.notify({type: 'update', data: cleanupConfig(__currentConfig.toPlainObject())}, ChannelTypes.ANON)
+            notificationProvider.notify({type: 'update', data: getAnonymousUpdate(__currentConfig)}, ChannelTypes.ANON)
     } catch (err) {
         logger.error({err}, 'Error while processing pending config')
     } finally {
@@ -460,7 +644,11 @@ async function processPendingConfig(configManager, syncTimestamp) {
             syncTimestamp = getNextSyncTimestamp(syncTimestamp)
             timeout = syncTimestamp - Date.now()
         }
-        setTimeout(() => processPendingConfig(configManager, syncTimestamp), timeout)
+        //setTimeout clamps any delay above 2^31-1 ms to 1 ms and warns, which turned a far-future pending config into
+        //a busy loop; cap the delay and let the next wake recompute syncTimestamp and the remaining delay
+        const maxDelay = 2147483647
+        __processTimer = setTimeout(() => processPendingConfig(configManager, syncTimestamp), Math.min(Math.max(timeout, 0), maxDelay))
+        __processing = false
     }
 }
 
@@ -469,7 +657,7 @@ async function waitForSuccessfulUpdate(__pendingConfig, __currentConfig, syncTim
     if (__pendingConfig.txHash && !__pendingConfig.hasMoreTxns) {
         const hashes = __pendingConfig.txHash.split(',')
         for (const hash of hashes) {
-            const txResponse = await getUpdateTx(__pendingConfig.txHash, __currentConfig.envelope.config.network)
+            const txResponse = await getUpdateTx(hash, __currentConfig.envelope.config.network)
             if (txResponse?.status !== 'SUCCESS') {
                 throw new Error(`Failed to get transaction response by hash: ${hash}. Status: ${txResponse?.status}`)
             }
@@ -535,14 +723,14 @@ function getConfigToModify(configItem) {
     } else if (__pendingConfig) {
         if (!__pendingConfig.envelope.isPayloadEqual(configItem.envelope))
             throw new ValidationError('Pending config already exists')
-        if (__pendingConfig.envelope.expirationDate < Date.now())
+        if (__pendingConfig.expirationDate < Date.now())
             throw new ValidationError('Pending config already expired')
         configToModify = __pendingConfig
     } else
         return null
 
     const signatureIndex = configToModify.envelope.signatures.findIndex(s => s.pubkey === signature.pubkey)
-    if (signatureIndex >= 0 && ![ConfigStatus.VOTING].includes(configToModify.status))
+    if (signatureIndex >= 0 && ![ConfigStatus.VOTING, ConfigStatus.PENDING].includes(configToModify.status))
         throw new ValidationError('Signature cannot be modified for this config in status ' + configToModify.status)
     return {configToModify, signatureIndex}
 }
@@ -560,7 +748,7 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
     let update = null
     //prepare signatures update, and modify signatures collection
     if (signatureIndex >= 0) {
-        update = {$set: {[`config.signatures.${signatureIndex}`]: signature}}
+        update = {$set: {[`signatures.${signatureIndex}`]: signature}}
         signatures[signatureIndex] = signature
     } else {
         update = {$push: {signatures: signature}}
@@ -568,13 +756,15 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
     }
     if (configItem.status !== ConfigStatus.APPLIED) { //only update status if config is not applied
         //compute status and add to update if changed
-        const currentStatus = computeUpdateStatus(signatures, nodesCount, isInitConfig)
+        let currentStatus = computeUpdateStatus(signatures, nodesCount, isInitConfig)
+        if (signatureIndex === 0 && signature.rejected) //the initiator withdrew the proposal
+            currentStatus = ConfigStatus.REJECTED
         if (configItem.status !== currentStatus) {
             update.$set = update.$set || {}
             update.$set.status = currentStatus
             if (currentStatus === ConfigStatus.PENDING) {
                 //get timestamp for pending config
-                update.$set.timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
+                update.$set.timestamp = scheduleSwitch(configItem)
             }
         }
     }
@@ -595,11 +785,35 @@ async function updateConfig(configItem, signatureIndex, signature, nodesCount, i
     return configItem
 }
 
+/**
+ * Pick the execution time of an update that reached PENDING. It always lies on the sync grid: a round started there ends
+ * its last attempt (maxTime 60 s after the switch, polled for one second more) a minute before the next tick, where a
+ * failed round is retried; from an odd-minute switch time that tick came a second before the poll ended, so the retry
+ * could read an account sequence the nodes' retry had already moved.
+ * An explicit timestamp is rounded up onto the grid, which keeps it at or after the signed `minDate` it may not
+ * precede; the timestamp is not signed, and votes on a PENDING envelope carry the stored value. Without one the update
+ * runs a grace period after the later of `minDate` and now.
+ * @param {number} timestamp - timestamp carried by the envelope, 0 when the proposer left it open
+ * @param {number} [minDate] - earliest execution time the config allows
+ * @returns {number}
+ */
 function getTimestamp(timestamp, minDate) {
     if (timestamp)
-        return timestamp
-    minDate = normalizeTimestamp(Math.max(minDate || Date.now()), updateIdleTimeframe)
-    return minDate + 1000 * 60 * 3 //10 minutes
+        return Math.ceil(timestamp / updateIdleTimeframe) * updateIdleTimeframe
+    const earliest = normalizeTimestamp(Math.max(minDate || 0, Date.now()), updateIdleTimeframe)
+    return earliest + updateGracePeriod
+}
+
+/**
+ * The switch time of an update turning PENDING, refused when its round would outlast the proposal
+ * @param {ConfigItem} configItem - the update turning PENDING
+ * @returns {number}
+ */
+function scheduleSwitch(configItem) {
+    const timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
+    if (!endsBeforeExpiration(timestamp, configItem.expirationDate))
+        throw new ValidationError('The update cannot be applied before the proposal expires')
+    return timestamp
 }
 
 /**
@@ -615,7 +829,7 @@ async function createConfig(configItem, nodesCount, isInitConfig, isBlockchainUp
     configItem.status = currentStatus
     configItem.isBlockchainUpdate = isBlockchainUpdate
     if (currentStatus === ConfigStatus.PENDING) {
-        configItem.envelope.timestamp = getTimestamp(configItem.envelope.timestamp, configItem.envelope.config.minDate)
+        configItem.envelope.timestamp = scheduleSwitch(configItem)
     }
     const rawConfig = configItem.toPlainObject()
     const configDoc = new ConfigEnvelopeModel(rawConfig)
@@ -656,3 +870,4 @@ function getConfigForClient(configItem) {
 }
 
 module.exports = ConfigManager
+module.exports.getTimestamp = getTimestamp

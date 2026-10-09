@@ -1,30 +1,12 @@
 const {Account} = require('@stellar/stellar-sdk')
-const {buildUpdateTransaction} = require('@reflector/reflector-shared')
+//The submit schedule is reflector-shared's, the one the nodes build with; a cluster round lasts clusterRoundLength.
+//baseUpdateFee mirrors reflector-node src/domain/runners/cluster-runner.js; change both in the same release.
+const {buildUpdateTransaction, FEE_MULTIPLIER, maxSubmitAttempts, getMaxTime, clusterRoundLength} = require('@reflector/reflector-shared')
 const logger = require('../logger')
-const {getTransactions} = require('../utils/horizon-helper')
+const {getAccountSequence} = require('../utils/rpc-helper')
 const container = require('./container')
 
-//These constants are a deliberate mirror of the submit schedule in
-//`reflector-node` (src/domain/runners/runner-base.js). The cluster's
-//ClusterRunner builds and submits the update tx with these exact fee
-//and maxTime values; the orchestrator must build with the same values
-//to derive a matching hash. If you change anything here, you MUST
-//change the node side in the same release.
 const baseUpdateFee = 10_000_000
-const FEE_MULTIPLIER = 8
-const firstAttemptTimeout = 30_000
-const retryAttemptTimeout = 15_000
-const maxSubmitAttempts = 3
-
-/**
- * @param {number} syncTimestamp - sync timestamp in milliseconds
- * @param {number} iteration - 1-based iteration (attempt 0 → iteration 1)
- * @returns {number} - max time in seconds
- */
-function __getMaxTime(syncTimestamp, iteration) {
-    const budgetMs = firstAttemptTimeout + retryAttemptTimeout * (iteration - 1)
-    return (syncTimestamp + budgetMs) / 1000
-}
 
 /**
  *
@@ -39,7 +21,7 @@ function __getMaxTime(syncTimestamp, iteration) {
 async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, syncTimestamp, iteration = 0) {
 
     const fee = baseUpdateFee * Math.pow(FEE_MULTIPLIER, iteration)
-    const maxTime = __getMaxTime(syncTimestamp, iteration + 1)
+    const maxTime = getMaxTime(syncTimestamp, iteration, clusterRoundLength)
 
     const {network, systemAccount} = currentConfig
     const {urls, passphrase} = container.appConfig.getNetworkConfig(network)
@@ -65,39 +47,23 @@ async function getUpdateTxHash(currentConfig, newConfig, accountSequence, timest
 }
 
 /**
- * Fetches the last transactions for all contracts in the cluster.
- * @returns {Promise<Object.<string, string[]>>} - A map of contract IDs to their last transaction hashes.
+ * Builds the update transaction from the system account's current sequence, as the first attempt of the round at the
+ * switch time would; the switch time is on the sync grid, so the bounds are whole seconds. Building simulates its
+ * contract call, so an update the contracts refuse rejects here with the simulation error
+ * @param {Config} currentConfig - current config
+ * @param {Config} newConfig - proposed config
+ * @param {number} timestamp - switch time in milliseconds
+ * @returns {Promise<void>}
  */
-async function getLastClusterTransactions() {
-    //ensure that the config is loaded
-    const config = container.configManager.currentConfig
-    if (!config)
-        return
-    const requests = new Map()
-    //get all transaction sources
-    for (const [contractId, account] of [...config.contracts.values()]
-        .map(c => [c.contractId, c.admin])
-        .concat([null, config.systemAccount])) {
-        requests.set(contractId, getTransactions(account))
-    }
-    await Promise.allSettled(...requests.values())
-    return requests.entries().reduce((acc, [contractId, promise]) => {
-        if (promise.status === 'fulfilled' && promise.value) {
-            acc[contractId] = promise.value.map(tx => ({
-                hash: tx.hash
-            }))
-        } else {
-            logger.warn(`Failed to get transactions for contract ${contractId}: ${promise.reason?.message || 'Unknown error'}`)
-        }
-        return acc
-    }, {})
+async function checkUpdateBuilds(currentConfig, newConfig, timestamp) {
+    const accountSequence = await getAccountSequence(currentConfig)
+    await getUpdateTxHash(currentConfig, newConfig, accountSequence, timestamp, timestamp)
 }
 
 module.exports = {
     getUpdateTxHash,
-    getLastClusterTransactions,
+    checkUpdateBuilds,
     maxSubmitAttempts,
     baseUpdateFee,
-    FEE_MULTIPLIER,
-    __getMaxTime
+    FEE_MULTIPLIER
 }

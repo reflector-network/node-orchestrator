@@ -62,20 +62,22 @@ class ChannelBase {
 
     /**
      * @param {any} message - message to send
+     * @param {number} [timeout] - response deadline in ms; defaults to 5 s (1 h when debugging)
      * @returns {Promise<any>}
      */
-    send(message) {
+    send(message, timeout = null) {
         return new Promise((resolve, reject) => {
             if (!message.responseId) {
-                message.requestId = uuidv4()
-                const timeout = isDebugging() ? 60 * 1000 * 60 : 5000
+                const requestId = uuidv4()
+                message.requestId = requestId
+                const requestTimeout = timeout || (isDebugging() ? 60 * 1000 * 60 : 5000)
                 const responseTimeout = setTimeout(() => {
-                    delete this.__requests[message.requestId]
-                    const error = new Error(`Request timed out after ${timeout}. Message: ${message.type}. ${this.__getConnectionInfo()}`)
+                    delete this.__requests[requestId]
+                    const error = new Error(`Request timed out after ${requestTimeout}. Message: ${message.type}. ${this.__getConnectionInfo()}`)
                     error.timeout = true
                     reject(error)
-                }, timeout)
-                this.__requests[message.requestId] = {
+                }, requestTimeout)
+                this.__requests[requestId] = {
                     resolve,
                     reject,
                     responseTimeout
@@ -83,7 +85,14 @@ class ChannelBase {
             }
             try {
                 if (!this.__ws || this.__ws.readyState !== WebSocket.OPEN) {
-                    reject(new Error(`Connection is not open. ${this.__getConnectionInfo()}`))
+                    const pending = this.__requests[message.requestId]
+                    if (pending && !message.responseId) { //nothing was sent, so nothing will answer
+                        clearTimeout(pending.responseTimeout)
+                        delete this.__requests[message.requestId]
+                    }
+                    const error = new Error(`Connection is not open. ${this.__getConnectionInfo()}`)
+                    error.notConnected = true
+                    reject(error)
                     return
                 }
                 this.__ws.send(JSON.stringify(message), (err) => {
@@ -106,6 +115,7 @@ class ChannelBase {
             reason = Buffer.from(reason).subarray(0, 123).toString()
         }
         this.__termination = terminate
+        this.__rejectPendingRequests(`${code} ${reason}`)
         const ws = this.__ws
         if (ws) {
             ws.closeTimeout = setTimeout(() => {
@@ -121,6 +131,23 @@ class ChannelBase {
             } else if (ws.readyState === WebSocket.CLOSED) {
                 this.__closeAndInvalidate(ws, code, reason)
             }
+        }
+    }
+
+    /**
+     * Rejects every request still waiting for an answer. Once the socket is going away no answer can arrive, and a
+     * caller left waiting would hold its HTTP request open until the send deadline
+     * @param {string} reason - why the socket is going away
+     * @private
+     */
+    __rejectPendingRequests(reason) {
+        const requests = this.__requests
+        this.__requests = {}
+        for (const request of Object.values(requests)) {
+            clearTimeout(request.responseTimeout)
+            const error = new Error(`Connection closed before the peer answered: ${reason}. ${this.__getConnectionInfo()}`)
+            error.connectionClosed = true
+            request.reject(error)
         }
     }
 
@@ -172,9 +199,15 @@ class ChannelBase {
                 if (request) {
                     delete this.__requests[message.responseId]
                     clearTimeout(request.responseTimeout)
-                    if (message.type === MessageTypes.ERROR)
-                        request.reject(new Error(message.error))
-                    else
+                    if (message.type === MessageTypes.ERROR) {
+                        const error = new Error(message.error)
+                        error.isPeerError = true
+                        request.reject(error)
+                    } else if (result.type === MessageTypes.ERROR) { //the handler for the response frame threw
+                        const error = new Error(result.error)
+                        error.isPeerError = true
+                        request.reject(error)
+                    } else
                         request.resolve(result.data) //resolve the promise with the result
                 }
             }
@@ -190,6 +223,7 @@ class ChannelBase {
     __closeAndInvalidate(ws, code, reason) {
         if (!ws)
             return
+        this.__rejectPendingRequests(`${code} ${String(reason || '') || 'abnormal'}`) //ws hands the reason over as a Buffer
         ws.closeTimeout && clearTimeout(ws.closeTimeout)
         if (ws.readyState !== WebSocket.CLOSED) {
             logger.warn(`${this.__getConnectionInfo()} was not closed properly (${ws.readyState}). Terminating...`)
@@ -210,6 +244,10 @@ class ChannelBase {
     __onError(error) {
         logger.debug(`${this.__getConnectionInfo()} websocket error`)
         logger.debug(error)
+        //ws starts closing before it reports a protocol error such as an oversized frame (1009), and the close event
+        //follows only once the peer answers the close frame
+        if (this.__ws && this.__ws.readyState !== WebSocket.OPEN)
+            this.__rejectPendingRequests(error.message)
     }
 
     __getConnectionInfo() {

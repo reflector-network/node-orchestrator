@@ -9,6 +9,7 @@
  * @typedef {Object} NodeDto
  * @property {string} pubkey - The public key
  * @property {string} url - The url
+ * @property {string} domain - The node domain
  */
 
 /**
@@ -31,5 +32,3 @@
  * @property {boolean} isBlockchainUpdate - The is blockchain update flag
  * @property {boolean} allowEarlySubmission - The allow early submission flag
  */
-
-export {}

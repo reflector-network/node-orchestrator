@@ -1,0 +1,810 @@
+/*eslint-disable no-undef */
+const {ConfigEnvelope} = require('@reflector/reflector-shared')
+const {
+    FAR_FUTURE,
+    CONTRACT_ID,
+    getNodeKeypairs,
+    buildConfig,
+    changedConfig,
+    getSignedEnvelope,
+    makeDoc,
+    acceptedSignature,
+    rejectedSignature,
+    submit,
+    loadConfigManager
+} = require('./helpers/config-manager-harness')
+
+afterEach(() => {
+    jest.clearAllTimers()
+    jest.useRealTimers()
+})
+
+describe('getConfigMessage', () => {
+    test('omits rejected signatures from the envelopes sent to nodes', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b, c] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(c), rejectedSignature(b)],
+                status: 'pending',
+                timestamp: FAR_FUTURE,
+                isBlockchainUpdate: true
+            })
+        ]
+        const {configManager} = await loadConfigManager({docs, nodeKps})
+
+        const message = configManager.getConfigMessage()
+
+        expect(message.data.pendingConfig).toBeDefined()
+        expect(message.data.pendingConfig.signatures.map(s => s.pubkey)).toEqual([a.publicKey(), c.publicKey()])
+        expect(message.data.pendingConfig.signatures.some(s => s.rejected)).toBe(false)
+        expect(message.data.currentConfig.signatures).toHaveLength(2)
+        expect(message.data.currentConfig.config.clusterSecret).toBe('seed-cluster-secret') //nodes need the secret
+    })
+})
+
+//a node skips a round of the pending update that would end after the proposal expires, so it needs the expiration date;
+//it travels beside the envelope, outside every signed payload, and a node that does not know it ignores it
+describe('the pending config expiry travels to nodes', () => {
+    const expiry = FAR_FUTURE + 123_000
+
+    test('a PENDING update carries its expiration date as unsigned metadata, and the current config carries none', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b, c] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(c), rejectedSignature(b)],
+                status: 'pending',
+                timestamp: FAR_FUTURE,
+                expirationDate: expiry,
+                isBlockchainUpdate: true
+            })
+        ]
+        const {configManager} = await loadConfigManager({docs, nodeKps})
+
+        const {currentConfig, pendingConfig} = configManager.getConfigMessage().data
+
+        expect(pendingConfig.expirationDate).toBe(expiry)
+        expect(pendingConfig.timestamp).toBe(FAR_FUTURE)
+        expect(pendingConfig.signatures.map(s => s.pubkey)).toEqual([a.publicKey(), c.publicKey()])
+        expect(Object.keys(currentConfig).sort()).toEqual(['allowEarlySubmission', 'config', 'signatures', 'timestamp'])
+        //a node parses the message with ConfigEnvelope, which keeps no expirationDate: the envelope it verifies and
+        //stores is the same with or without it
+        const withExpiry = new ConfigEnvelope(pendingConfig).toPlainObject()
+        const {expirationDate, ...withoutExpiry} = pendingConfig
+        expect(expirationDate).toBe(expiry)
+        expect(withExpiry).toEqual(new ConfigEnvelope(withoutExpiry).toPlainObject())
+        expect(Object.keys(withExpiry).sort()).toEqual(['allowEarlySubmission', 'config', 'signatures', 'timestamp'])
+    })
+
+    test('the vote that makes an update PENDING tells nodes its expiration date', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const {configManager, notificationProvider, MessageTypes} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+
+        await submit(configManager, getSignedEnvelope(proposed, a, {expirationDate: expiry}))
+        await submit(configManager, getSignedEnvelope(proposed, b, {expirationDate: expiry}))
+        await jest.advanceTimersByTimeAsync(1000) //updateItems waits one second before notifying
+
+        expect(configManager.getCurrentConfigs().pendingConfig.config.status).toBe('pending')
+        const configMessages = notificationProvider.notify.mock.calls.map(call => call[0]).filter(m => m.type === MessageTypes.CONFIG)
+        expect(configMessages.length).toBeGreaterThan(0)
+        const last = configMessages[configMessages.length - 1]
+        expect(last.data.pendingConfig.expirationDate).toBe(expiry)
+        expect(last.data.currentConfig.expirationDate).toBeUndefined()
+    })
+
+    test('a VOTING update sends no pending config, so no expiration date', async () => {
+        const nodeKps = getNodeKeypairs(4) //majority 3, so one vote keeps the update in VOTING
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const {configManager} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+
+        await submit(configManager, getSignedEnvelope(proposed, a, {expirationDate: expiry}))
+
+        expect(configManager.getCurrentConfigs().pendingConfig.config.status).toBe('voting')
+        const {currentConfig, pendingConfig} = configManager.getConfigMessage().data
+        expect(pendingConfig).toBeUndefined()
+        expect(currentConfig.expirationDate).toBeUndefined()
+    })
+})
+
+describe('vote change persistence', () => {
+    test('a flipped vote lands in signatures[N] and nowhere inside config', async () => {
+        const nodeKps = getNodeKeypairs(4) //majority 3, so two votes keep the envelope in VOTING
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const {configManager, model} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+
+        await submit(configManager, getSignedEnvelope(proposed, a))
+        await submit(configManager, getSignedEnvelope(proposed, b))
+        const pendingId = configManager.getCurrentConfigs().pendingConfig.config.id
+        expect(model.__get(pendingId).status).toBe('voting')
+
+        await submit(configManager, getSignedEnvelope(proposed, b, {rejected: true}))
+
+        const stored = model.__get(pendingId)
+        expect(stored.signatures).toHaveLength(2)
+        expect(stored.signatures[1]).toMatchObject({pubkey: b.publicKey(), rejected: true})
+        expect(stored.config.signatures).toBeUndefined()
+        expect(stored.status).toBe('voting')
+        expect(configManager.getCurrentConfigs().pendingConfig.config.signatures[1].rejected).toBe(true)
+    })
+})
+
+describe('PENDING lifecycle', () => {
+    test('an expired PENDING envelope is rejected and nodes are told to clear it', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(b)],
+                status: 'pending',
+                timestamp: FAR_FUTURE,
+                expirationDate: Date.now() - 1000,
+                isBlockchainUpdate: true
+            })
+        ]
+        const {configManager, model, notificationProvider, MessageTypes} = await loadConfigManager({docs, nodeKps})
+
+        await jest.advanceTimersByTimeAsync(1000) //processPendingConfig ran during init; updateItems waits one second before notifying
+
+        expect(model.__get('pending-1').status).toBe('rejected')
+        expect(configManager.getCurrentConfigs().pendingConfig).toBeNull()
+        const configMessages = notificationProvider.notify.mock.calls.map(call => call[0]).filter(m => m.type === MessageTypes.CONFIG)
+        expect(configMessages).toHaveLength(1)
+        expect(configMessages[0].data.pendingConfig).toBeUndefined()
+    })
+
+    test('a vote on an expired PENDING envelope is refused with the expiry error', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b, c] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(b)],
+                status: 'pending',
+                timestamp: FAR_FUTURE,
+                expirationDate: Date.now() + 5000,
+                isBlockchainUpdate: true
+            })
+        ]
+        const {configManager} = await loadConfigManager({docs, nodeKps})
+        jest.setSystemTime(Date.now() + 6000) //past the expiry, without running the recursive processPendingConfig tick
+
+        const vote = getSignedEnvelope(proposed, c, {rejected: true, timestamp: FAR_FUTURE})
+
+        await expect(submit(configManager, vote)).rejects.toThrow('Pending config already expired')
+    })
+
+    test('a signer who flips to reject drops a PENDING envelope back to VOTING and nodes clear it', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const {configManager, model, notificationProvider, MessageTypes} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+        await submit(configManager, getSignedEnvelope(proposed, a))
+        await submit(configManager, getSignedEnvelope(proposed, b))
+        const pending = configManager.getCurrentConfigs().pendingConfig.config
+        expect(pending.status).toBe('pending')
+        notificationProvider.notify.mockClear()
+
+        await submit(configManager, getSignedEnvelope(proposed, b, {rejected: true, timestamp: pending.timestamp}))
+        await jest.advanceTimersByTimeAsync(1000)
+
+        expect(model.__get(pending.id).status).toBe('voting')
+        expect(model.__get(pending.id).signatures[1]).toMatchObject({pubkey: b.publicKey(), rejected: true})
+        expect(configManager.getCurrentConfigs().pendingConfig.config.status).toBe('voting')
+        const configMessage = notificationProvider.notify.mock.calls.map(call => call[0]).find(m => m.type === MessageTypes.CONFIG)
+        expect(configMessage.data.pendingConfig).toBeUndefined()
+    })
+
+    test('the initiator withdrawing rejects a PENDING envelope', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const {configManager, model} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+        await submit(configManager, getSignedEnvelope(proposed, a))
+        await submit(configManager, getSignedEnvelope(proposed, b))
+        const pending = configManager.getCurrentConfigs().pendingConfig.config
+
+        await submit(configManager, getSignedEnvelope(proposed, a, {rejected: true, timestamp: pending.timestamp}))
+        await jest.advanceTimersByTimeAsync(1000)
+
+        expect(model.__get(pending.id).status).toBe('rejected')
+        expect(configManager.getCurrentConfigs().pendingConfig).toBeNull()
+    })
+})
+
+describe('envelope submission binding', () => {
+    async function votingCluster() {
+        const nodeKps = getNodeKeypairs(4) //majority 3, so single votes keep the envelope in VOTING
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const loaded = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+        return {...loaded, nodeKps, proposed}
+    }
+
+    test('an envelope signed by someone other than the authenticated caller is refused', async () => {
+        const {configManager, nodeKps, proposed} = await votingCluster()
+        const [a, b] = nodeKps
+        const envelope = getSignedEnvelope(proposed, a)
+
+        await expect(configManager.create(envelope, b.publicKey()))
+            .rejects.toThrow('Envelope must be signed by the authenticated caller')
+        expect(configManager.getCurrentConfigs().pendingConfig).toBeNull()
+    })
+
+    test('an anonymous submission is refused', async () => {
+        const {configManager, nodeKps, proposed} = await votingCluster()
+        const [a] = nodeKps
+
+        await expect(configManager.create(getSignedEnvelope(proposed, a), undefined))
+            .rejects.toThrow('Envelope must be signed by the authenticated caller')
+    })
+
+    test('a replayed signature is refused and the stored nonce is not lowered', async () => {
+        const {configManager, nonceProvider, nodeKps, proposed} = await votingCluster()
+        const [a] = nodeKps
+        const envelope = getSignedEnvelope(proposed, a)
+
+        await submit(configManager, envelope)
+        expect(await nonceProvider.getSignatureNonce(a.publicKey())).toBe(envelope.signatures[0].nonce)
+
+        await expect(submit(configManager, envelope)).rejects.toThrow('Signature nonce is outdated')
+        expect(await nonceProvider.getSignatureNonce(a.publicKey())).toBe(envelope.signatures[0].nonce)
+        expect(configManager.getCurrentConfigs().pendingConfig.config.signatures).toHaveLength(1)
+    })
+
+    test('nonces are tracked per signer, so a second voter is not blocked by the first', async () => {
+        const {configManager, nodeKps, proposed} = await votingCluster()
+        const [a, b] = nodeKps
+
+        await submit(configManager, getSignedEnvelope(proposed, a))
+        await submit(configManager, getSignedEnvelope(proposed, b))
+
+        const signatures = configManager.getCurrentConfigs().pendingConfig.config.signatures
+        expect(signatures.map(s => s.pubkey)).toEqual([a.publicKey(), b.publicKey()])
+    })
+
+    test('a signature nonce that is not a positive safe integer is refused', async () => {
+        const {configManager, nodeKps, proposed} = await votingCluster()
+        const [a] = nodeKps
+        const envelope = getSignedEnvelope(proposed, a)
+        envelope.signatures[0].nonce = Number.MAX_SAFE_INTEGER + 2
+
+        //the nonce is mutated after signing, so the message matters less than the fact that the nonce is what is
+        //refused: under 7.1.4 the manager's own range check throws, under 7.2.0 `Signature.__setNonce` throws first
+        await expect(submit(configManager, envelope)).rejects.toThrow(/nonce/i)
+    })
+
+    test('two proposals submitted at the same time leave one voting document', async () => {
+        const {configManager, model, nodeKps, proposed} = await votingCluster()
+        const [a, b] = nodeKps
+        const other = structuredClone(proposed)
+        other.contracts[CONTRACT_ID].period = 8888888
+
+        const results = await Promise.allSettled([
+            submit(configManager, getSignedEnvelope(proposed, a)),
+            submit(configManager, getSignedEnvelope(other, b))
+        ])
+
+        const rejected = results.filter(r => r.status === 'rejected')
+        expect(rejected).toHaveLength(1)
+        expect(rejected[0].reason.message).toBe('Pending config already exists')
+        expect(model.__all().filter(d => d.status === 'voting')).toHaveLength(1)
+    })
+
+    test('anonymous broadcasts carry no signatures', async () => {
+        const {configManager, notificationProvider, nodeKps, proposed} = await votingCluster()
+        const [a] = nodeKps
+
+        await submit(configManager, getSignedEnvelope(proposed, a))
+
+        const broadcast = notificationProvider.notify.mock.calls.map(call => call[0]).find(m => m.type === 'config-created')
+        expect(broadcast).toBeDefined()
+        expect(broadcast.data.signatures).toBeUndefined()
+        expect(broadcast.data.config.clusterSecret).toBeUndefined()
+    })
+})
+
+describe('shared envelope verifier', () => {
+    async function cluster(nodeKps) {
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const loaded = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+        return {...loaded, config}
+    }
+
+    test('a node the proposal adds cannot vote on it', async () => {
+        const nodeKps = getNodeKeypairs(4)
+        const newcomer = getNodeKeypairs(5)[4]
+        const {configManager} = await cluster(nodeKps)
+        const proposed = buildConfig([...nodeKps, newcomer])
+
+        await expect(submit(configManager, getSignedEnvelope(proposed, newcomer)))
+            .rejects.toThrow('Signature pubkey doesn\'t exist in config nodes')
+        expect(configManager.getCurrentConfigs().pendingConfig).toBeNull()
+    })
+
+    test('a node the proposal removes still votes on it', async () => {
+        const nodeKps = getNodeKeypairs(4)
+        const leaving = nodeKps[3]
+        const {configManager} = await cluster(nodeKps)
+        const proposed = buildConfig(nodeKps.slice(0, 3))
+
+        await submit(configManager, getSignedEnvelope(proposed, leaving))
+
+        const pending = configManager.getCurrentConfigs().pendingConfig.config
+        expect(pending.status).toBe('voting')
+        expect(pending.signatures.map(s => s.pubkey)).toEqual([leaving.publicKey()])
+    })
+
+    test('a signature over a different payload is refused', async () => {
+        const nodeKps = getNodeKeypairs(4)
+        const [a] = nodeKps
+        const {configManager, config} = await cluster(nodeKps)
+        const proposed = changedConfig(config)
+        const envelope = getSignedEnvelope(proposed, a)
+        envelope.signatures[0].signature = envelope.signatures[0].signature.replace(/^../, 'ff')
+
+        await expect(submit(configManager, envelope)).rejects.toThrow('Invalid signature')
+    })
+})
+
+describe('apply step atomicity', () => {
+    test('the new envelope is marked applied before the old one is replaced', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied', updatedAt: 1000}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(b)],
+                status: 'pending',
+                timestamp: 1000, //update time already reached
+                updatedAt: 2000,
+                isBlockchainUpdate: false //no chain interaction: the status change is the whole apply step
+            })
+        ]
+        const {configManager, model} = await loadConfigManager({docs, nodeKps})
+
+        await jest.advanceTimersByTimeAsync(1000) //processPendingConfig ran during init; updateItems waits a second
+
+        expect(model.__updates.map(u => [u.id, u.update.status])).toEqual([
+            ['pending-1', 'applied'],
+            ['applied-1', 'replaced']
+        ])
+        expect(model.__get('pending-1').status).toBe('applied')
+        expect(model.__get('applied-1').status).toBe('replaced')
+        expect(configManager.getCurrentConfigs().pendingConfig).toBeNull()
+    })
+
+    test('init adopts the newest applied envelope and repairs the interrupted pair', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const newer = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-old', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied', updatedAt: 1000}),
+            makeDoc({id: 'applied-new', config: newer, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied', updatedAt: 2000})
+        ]
+        const {configManager, model} = await loadConfigManager({docs, nodeKps})
+
+        const current = configManager.getCurrentConfigs().currentConfig.config
+        expect(current.id).toBe('applied-new')
+        expect(model.__get('applied-old').status).toBe('replaced')
+        expect(model.__get('applied-new').status).toBe('applied')
+    })
+})
+
+describe('pending config reschedule does not overflow setTimeout', () => {
+    test('a pending config far in the future reschedules with the clamped delay instead of busy-looping', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        //90 days out, comfortably past the ~24.8-day limit where a raw ms delay overflows setTimeout's 32-bit clamp
+        const farFuture = Date.now() + 1000 * 60 * 60 * 24 * 90
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(b)],
+                status: 'pending',
+                timestamp: farFuture,
+                isBlockchainUpdate: false
+            })
+        ]
+        //init() already ran processPendingConfig once and scheduled the first reschedule before this line returns
+        await loadConfigManager({docs, nodeKps})
+
+        const maxDelay = 2147483647 //Node's largest valid setTimeout delay
+        const setTimeoutSpy = jest.spyOn(global, 'setTimeout')
+
+        //fires the timer scheduled by init(); the handler must reschedule exactly once, not thousands of times
+        await jest.advanceTimersByTimeAsync(maxDelay)
+
+        expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+        expect(setTimeoutSpy.mock.calls[0][1]).toBe(maxDelay)
+
+        //nowhere near the ~65 remaining days until the pending config's timestamp; a busy loop would refire almost immediately
+        await jest.advanceTimersByTimeAsync(100)
+        expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('per-hash update confirmation', () => {
+    test('each recorded transaction hash is confirmed on its own, never the joined string', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied', updatedAt: 1000}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: [acceptedSignature(a), acceptedSignature(b)],
+                status: 'pending',
+                timestamp: 1000, //update time already reached
+                updatedAt: 2000,
+                txHash: 'hash-one,hash-two',
+                hasMoreTxns: false,
+                isBlockchainUpdate: true //the chain path is what calls getUpdateTx
+            })
+        ]
+        const {model, rpcHelper} = await loadConfigManager({docs, nodeKps})
+
+        await jest.advanceTimersByTimeAsync(1000)
+
+        //one lookup per hash, each with its own value, never one of the whole comma-joined string
+        expect(rpcHelper.getUpdateTx.mock.calls.map(call => call[0])).toEqual(['hash-one', 'hash-two'])
+        expect(model.__get('pending-1').status).toBe('applied')
+    })
+})
+
+//Mirrors reflector-node cluster-runner.js: allowEarlySubmission is set by the orchestrator after the vote and is not
+//signed, so it may skip the derived execution slot but never the signed minDate. Nodes refuse to build before it, so an
+//orchestrator without the gate polls for update transactions nobody builds
+describe('early submission waits for the signed minDate', () => {
+    const minute = 60 * 1000
+    const slot = 2 * minute //updateIdleTimeframe: an early-submission update is retried on these boundaries
+    const boundary = 1800000000000 //a slot boundary
+    const start = boundary + 30 * 1000 //the clock at load, half a minute into its slot
+
+    /**
+     * Loads a cluster whose pending update is signed by every node, allows early submission and needs a transaction,
+     * with its own execution time a day away. The clock starts at `start`
+     * @param {number} minDate - the proposal's minDate
+     * @returns {Promise<{model: object, rpcHelper: object}>}
+     */
+    async function earlyCluster(minDate) {
+        const nodeKps = getNodeKeypairs(3)
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        proposed.minDate = minDate
+        const everySignature = nodeKps.map(acceptedSignature)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: everySignature.slice(0, 2), status: 'applied', updatedAt: 1000}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: everySignature,
+                status: 'pending',
+                timestamp: start + 24 * 60 * minute,
+                updatedAt: 2000,
+                isBlockchainUpdate: true,
+                allowEarlySubmission: true
+            })
+        ]
+        const {model, rpcHelper} = await loadConfigManager({docs, nodeKps, now: start})
+        await jest.advanceTimersByTimeAsync(0)
+        return {model, rpcHelper}
+    }
+
+    //the first thing the transaction path does is read the account sequence to derive the update hash
+    const builds = rpcHelper => rpcHelper.getAccountSequence.mock.calls.length
+
+    test('with minDate in the future nothing is built until the tick that reaches it, which builds and applies', async () => {
+        const minDate = boundary + 5 * slot //a retry tick lands exactly on it
+        const {model, rpcHelper} = await earlyCluster(minDate)
+
+        await jest.advanceTimersByTimeAsync(minDate - Date.now() - 1)
+        expect(builds(rpcHelper)).toBe(0)
+        expect(model.__get('pending-1').status).toBe('pending')
+
+        await jest.advanceTimersByTimeAsync(1) //the tick at exactly minDate: now >= minDate, as the node decides
+        expect(Date.now()).toBe(minDate)
+        expect(builds(rpcHelper)).toBe(1)
+        expect(model.__get('pending-1').status).toBe('applied')
+    })
+
+    test('with minDate already passed it builds at the first tick', async () => {
+        const {model, rpcHelper} = await earlyCluster(start - 10 * minute)
+
+        expect(builds(rpcHelper)).toBe(1)
+        expect(model.__get('pending-1').status).toBe('applied')
+    })
+
+    //the wall clock (`start`) is already past minDate, but the first tick's syncTimestamp (`boundary`) is not: the gate
+    //must read the tick, matching reflector-node cluster-runner.js (`timestamp < minDate`), not Date.now()
+    test('with the clock already past minDate but the tick before it, early submission is refused until the tick catches up', async () => {
+        const minDate = start - 1
+        const {model, rpcHelper} = await earlyCluster(minDate)
+
+        expect(builds(rpcHelper)).toBe(0)
+        expect(model.__get('pending-1').status).toBe('pending')
+
+        await jest.advanceTimersByTimeAsync(boundary + slot - start) //the next retry tick, at boundary + slot
+        expect(builds(rpcHelper)).toBe(1)
+        expect(model.__get('pending-1').status).toBe('applied')
+    })
+
+    //converse: the tick's syncTimestamp has reached minDate even though the wall clock has not. Forcing Date.now() behind
+    //minDate at that exact tick proves the gate reads syncTimestamp, not Date.now() - a revert to Date.now() fails this
+    test('with the tick past minDate it builds even if the clock reads earlier', async () => {
+        const minDate = boundary + slot //exactly the second retry tick's syncTimestamp
+        const {model, rpcHelper} = await earlyCluster(minDate)
+        expect(builds(rpcHelper)).toBe(0) //the first tick, at `boundary`, is still before minDate
+
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(boundary) //well before minDate, unlike the tick
+        try {
+            await jest.advanceTimersByTimeAsync(boundary + slot - start)
+            expect(builds(rpcHelper)).toBe(1)
+            expect(model.__get('pending-1').status).toBe('applied')
+        } finally {
+            nowSpy.mockRestore()
+        }
+    })
+
+    test('with minDate 0 there is no gate', async () => {
+        const {model, rpcHelper} = await earlyCluster(0)
+
+        expect(builds(rpcHelper)).toBe(1)
+        expect(model.__get('pending-1').status).toBe('applied')
+    })
+})
+
+describe('history filter validation', () => {
+    async function loaded() {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        return await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps
+        })
+    }
+
+    test('refuses a mongo operator in the status filter', async () => {
+        const {configManager} = await loaded()
+        await expect(configManager.history({status: {$ne: 'applied'}}, true)).rejects.toThrow('Invalid status filter')
+    })
+
+    test('refuses a status outside the enum and an initiator that is not a public key', async () => {
+        const {configManager} = await loaded()
+        await expect(configManager.history({status: 'whatever'}, true)).rejects.toThrow('Invalid status filter')
+        await expect(configManager.history({initiator: 'not-a-key'}, true)).rejects.toThrow('Invalid initiator filter')
+    })
+
+    test('accepts a valid filter', async () => {
+        const {configManager} = await loaded()
+        const rows = await configManager.history({status: 'applied', page: '1', pageSize: '5'}, true)
+        expect(rows).toHaveLength(1)
+        expect(rows[0].status).toBe('applied')
+        //the route needs a registered node key and node keys already hold the secret
+        expect(rows[0].config.clusterSecret).toBe('seed-cluster-secret')
+    })
+
+    test('hands Mongo a bounded page: at most 100 rows, skipping whole pages', async () => {
+        const {configManager, model} = await loaded()
+        const cursor = {sort: jest.fn(), skip: jest.fn(), limit: jest.fn(), exec: jest.fn(() => [])}
+        for (const step of ['sort', 'skip', 'limit'])
+            cursor[step].mockReturnValue(cursor)
+        model.find = jest.fn(() => cursor)
+
+        await configManager.history({initiator: getNodeKeypairs(1)[0].publicKey(), page: '3', pageSize: '1000000'}, true)
+        expect(model.find).toHaveBeenCalledWith({'signatures.0.pubkey': getNodeKeypairs(1)[0].publicKey()})
+        expect(cursor.skip).toHaveBeenCalledWith(200)
+        expect(cursor.limit).toHaveBeenCalledWith(100)
+
+        await configManager.history({page: '0'}, true)
+        expect(model.find).toHaveBeenLastCalledWith({})
+        expect(cursor.skip).toHaveBeenLastCalledWith(0)
+        expect(cursor.limit).toHaveBeenLastCalledWith(10)
+    })
+
+    test('returns every stored envelope exactly as stored, cluster secret and node urls included', async () => {
+        //the dead public-view branch discarded cleanupConfig's result, so /config/history has always sent full
+        //envelopes; removing the branch must not change a byte of the response
+        const {configManager, model} = await loaded()
+        const rows = await configManager.history({})
+        expect(JSON.stringify(rows)).toBe(JSON.stringify(model.__all()))
+        const node = Object.values(rows[0].config.nodes)[0]
+        expect(node.url).toBe('ws://127.0.0.1:3000')
+        expect(rows[0].config.clusterSecret).toBe('seed-cluster-secret')
+    })
+})
+
+describe('the scheduled switch is inclusive', () => {
+    const path = require('path')
+    const switchTime = 1800000000000 //on the two-minute grid the sync ticks use
+
+    test('the sync tick equal to the switch time builds the update with that tick, as the nodes do', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const everySignature = nodeKps.map(acceptedSignature)
+        const docs = [
+            makeDoc({id: 'applied-1', config, signatures: everySignature.slice(0, 2), status: 'applied', updatedAt: 1000}),
+            makeDoc({
+                id: 'pending-1',
+                config: proposed,
+                signatures: everySignature,
+                status: 'pending',
+                timestamp: switchTime,
+                updatedAt: 2000,
+                isBlockchainUpdate: true
+            })
+        ]
+        const {model} = await loadConfigManager({docs, nodeKps, now: switchTime - 90_000})
+        //the harness mocks this module; after its resetModules the require returns the same mock config-manager holds
+        const {getUpdateTxHash} = require(path.resolve(__dirname, '..', 'domain', 'blockchain-data-provider.js'))
+
+        await jest.advanceTimersByTimeAsync(90_000 - 1)
+        expect(getUpdateTxHash).not.toHaveBeenCalled()
+
+        await jest.advanceTimersByTimeAsync(1)
+        expect(getUpdateTxHash).toHaveBeenCalledTimes(1)
+        expect(getUpdateTxHash.mock.calls[0][3]).toBe(switchTime) //the envelope timestamp
+        expect(getUpdateTxHash.mock.calls[0][4]).toBe(switchTime) //the sync tick the maxTime is derived from
+        expect(model.__get('pending-1').status).toBe('applied')
+    })
+})
+
+describe('the switch time lies on the sync grid', () => {
+    const path = require('path')
+    const minute = 60 * 1000
+    const switchTime = 1800000000000 //on the two-minute grid
+
+    test('an explicit off-grid time is rounded up onto the grid when the update turns PENDING, and built at that tick', async () => {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        //as admin-dashboard proposes it: the middle of a timeframe, also signed as minDate
+        const requested = switchTime - 30 * 1000
+        proposed.minDate = requested
+        const {configManager, model} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps,
+            now: switchTime - 10 * minute + 30 * 1000
+        })
+        const {getUpdateTxHash} = require(path.resolve(__dirname, '..', 'domain', 'blockchain-data-provider.js'))
+
+        await submit(configManager, getSignedEnvelope(proposed, a, {timestamp: requested}))
+        expect(configManager.getCurrentConfigs().pendingConfig.config.timestamp).toBe(requested) //VOTING keeps it as signed
+        await submit(configManager, getSignedEnvelope(proposed, b, {timestamp: requested}))
+        const pending = configManager.getCurrentConfigs().pendingConfig.config
+        expect(pending.status).toBe('pending')
+        expect(pending.timestamp).toBe(switchTime)
+        expect(model.__get(pending.id).timestamp).toBe(switchTime)
+
+        await jest.advanceTimersByTimeAsync(switchTime - Date.now() - 1)
+        expect(getUpdateTxHash).not.toHaveBeenCalled()
+
+        await jest.advanceTimersByTimeAsync(1)
+        expect(getUpdateTxHash).toHaveBeenCalledTimes(1)
+        expect(getUpdateTxHash.mock.calls[0][3]).toBe(switchTime)
+        expect(getUpdateTxHash.mock.calls[0][4]).toBe(switchTime)
+        expect(model.__get(pending.id).status).toBe('applied')
+    })
+})
+
+//at the expiration date the orchestrator rejects a PENDING update while the nodes, which do not track expiry, still build
+//and apply it, so a round must be over - the last attempt's maxTime and the orchestrator's poll a second past it - before
+//the proposal expires
+describe('a switch at expiry is refused', () => {
+    const minute = 60 * 1000
+    const grid = 1800000000000
+    const expiry = grid + 8 * 24 * 60 * minute //on the grid, more than the seven days a proposal must run
+
+    /**
+     * @returns {Promise<{configManager: object, model: object, proposed: object, nodeKps: Keypair[]}>}
+     */
+    async function cluster() {
+        const nodeKps = getNodeKeypairs(3)
+        const [a, b] = nodeKps
+        const config = buildConfig(nodeKps)
+        const proposed = changedConfig(config)
+        const {configManager, model} = await loadConfigManager({
+            docs: [makeDoc({id: 'applied-1', config, signatures: [acceptedSignature(a), acceptedSignature(b)], status: 'applied'})],
+            nodeKps,
+            now: grid + 30 * 1000
+        })
+        return {configManager, model, proposed, nodeKps}
+    }
+
+    test('an explicit time whose round would end after the expiration date is refused, judged after rounding', async () => {
+        const {configManager, proposed, nodeKps: [a]} = await cluster()
+        const requested = expiry - 90 * 1000 //61 s clear of the expiry as requested, but it rounds up onto the expiry itself
+        const refusal = 'Config timestamp leaves no time to apply the update before the expiration date'
+
+        await expect(submit(configManager, getSignedEnvelope(proposed, a, {timestamp: requested, expirationDate: expiry})))
+            .rejects.toThrow(refusal)
+        await expect(submit(configManager, getSignedEnvelope(proposed, a, {timestamp: requested, expirationDate: expiry + 60_999})))
+            .rejects.toThrow(refusal)
+        expect(configManager.getCurrentConfigs().pendingConfig).toBeNull()
+
+        await submit(configManager, getSignedEnvelope(proposed, a, {timestamp: requested, expirationDate: expiry + 61_000}))
+        expect(configManager.getCurrentConfigs().pendingConfig.config.status).toBe('voting')
+    })
+
+    test('the vote that would schedule the default switch too close to the expiry is refused and not recorded', async () => {
+        const {configManager, model, proposed, nodeKps: [a, b]} = await cluster()
+        await submit(configManager, getSignedEnvelope(proposed, a, {expirationDate: expiry}))
+        const {id} = configManager.getCurrentConfigs().pendingConfig.config
+
+        jest.setSystemTime(expiry - 3 * minute) //the default switch time would be the expiry itself
+        await expect(submit(configManager, getSignedEnvelope(proposed, b, {expirationDate: expiry})))
+            .rejects.toThrow('The update cannot be applied before the proposal expires')
+        expect(model.__get(id).status).toBe('voting')
+        expect(model.__get(id).signatures).toHaveLength(1)
+
+        jest.setSystemTime(expiry - 5 * minute) //now it switches two minutes before the expiry
+        await submit(configManager, getSignedEnvelope(proposed, b, {expirationDate: expiry}))
+        expect(model.__get(id).status).toBe('pending')
+        expect(model.__get(id).timestamp).toBe(expiry - 2 * minute)
+    })
+})

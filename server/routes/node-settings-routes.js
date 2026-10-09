@@ -1,8 +1,16 @@
-const {sign} = require('@stellar/stellar-sdk')
 const container = require('../../domain/container')
 const {registerRoute} = require('../route')
 const MessageTypes = require('../ws/handlers/message-types')
+const {badRequest} = require('../errors')
+const {getConnectedNode} = require('./node-relay')
+const {checkGatewayUrls, validateGatewaysBody, validateGateways} = require('./gateway-validation')
 
+//a POST /validate-gateways body is {urls, validationKey}: it must not pass the POST /gateways shape check, because
+//the forwarded message would then clear the node's challenge with `challenge: undefined`. The check only holds because
+//validationKey is required there - an optional field would simply be absent from the captured body
+const gatewaysBodyFields = new Set(['urls', 'challenge'])
+//a signed body is valid on any POST route, so every route that persists or forwards one states the keys it accepts
+const nodeSettingsBodyFields = new Set(['emails'])
 
 function settingsRoutes(app) {
     /**
@@ -52,6 +60,11 @@ function settingsRoutes(app) {
      *
      */
     registerRoute(app, 'settings/node', {method: 'post'}, async (req) => {
+        const {emails} = req.body || {}
+        if (!Array.isArray(emails) || emails.some(email => typeof email !== 'string'))
+            throw badRequest('emails must be an array of strings')
+        if (Object.keys(req.body).some(key => !nodeSettingsBodyFields.has(key)))
+            throw badRequest('unexpected body field')
         const settings = await container.nodeSettingsManager.update(req.pubkey, req.body)
         return settings
     })
@@ -76,9 +89,7 @@ function settingsRoutes(app) {
      *
      */
     registerRoute(app, 'gateways', {method: 'get'}, async (req) => {
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
-        if (!node)
-            throw new Error('Node not found')
+        const node = getConnectedNode(req.pubkey)
         const data = {
             data: {payload: req.payload},
             signature: req.signature
@@ -107,16 +118,26 @@ function settingsRoutes(app) {
      *
      */
     registerRoute(app, 'gateways', {method: 'post'}, async (req) => {
-        const node = container.connectionManager.getNodeConnection(req.pubkey)
-        if (!node)
-            throw new Error('Node not found')
-        const data = {data: {...req.body, nonce: req.nonce}, signature: req.signature}
+        const {urls, challenge} = req.body
+        if (!Array.isArray(urls) || urls.some(url => typeof url !== 'string'))
+            throw badRequest('urls must be an array of strings')
+        if (challenge !== undefined && typeof challenge !== 'string')
+            throw badRequest('challenge must be a string')
+        if (Object.keys(req.body).some(key => !gatewaysBodyFields.has(key)))
+            throw badRequest('unexpected body field')
+        //the node refuses a list that breaks its gateway rules and then sends nothing at all rather than go direct, so
+        //a list it would refuse is not forwarded; the signed payload itself is relayed untouched
+        checkGatewayUrls(urls)
+        const node = getConnectedNode(req.pubkey)
+        //relay the payload the middleware authenticated instead of rebuilding it, so the node hashes the same
+        //bytes the signature covers - the payload now carries the route binding as well as the body
+        const data = {data: req.payload, signature: req.signature}
         await node.send({type: MessageTypes.GATEWAYS_POST, data})
     })
 
     /**
      * @openapi
-     * /gateways:
+     * /validate-gateways:
      *   post:
      *     summary: Validate gateways
      *     tags:
@@ -125,7 +146,17 @@ function settingsRoutes(app) {
      *       - ed25519Auth: []
      *     requestBody:
      *       content:
-     *         application/json
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               urls:
+     *                 type: array
+     *                 items:
+     *                   type: string
+     *               validationKey:
+     *                 type: string
+     *             required: [urls, validationKey]
      *     responses:
      *       200:
      *         description: Ok
@@ -135,43 +166,10 @@ function settingsRoutes(app) {
      *               $ref: '#/components/schemas/OkResult'
      *
      */
-    registerRoute(app, 'validate-gateways', {method: 'post'}, async (req) => {
-        const {urls, validationKey} = req.body
-        const result = {}
-        for (const url of urls) {
-            const info = await validateGateway(url, validationKey)
-            result[url] = info
-        }
-        return result
+    registerRoute(app, 'validate-gateways', {method: 'post'}, (req) => {
+        const {urls, validationKey} = validateGatewaysBody(req.body)
+        return validateGateways(urls, validationKey)
     })
-}
-
-async function validateGateway(address, validationKey) {
-    const validatedGateways = {}
-    const prev = validatedGateways[address]
-    if (prev?.status === 'healthy')
-        return prev
-    const info = {status: 'unreachable'}
-    validatedGateways[address] = info
-    try {
-        const {version} = await fetchGateway(address + '/', validationKey)
-        info.version = version
-        info.status = 'alive'
-
-        const {serverTime} = await fetchGateway(address + '/gateway?url=' + encodeURIComponent('https://api.binance.com/api/v3/time'), validationKey)
-        if (!serverTime)
-            throw new Error('Failed to check proxy connection with Binance API')
-        info.status = 'healthy'
-    } catch (e) {
-        console.error(e)
-        info.error = e.message
-    }
-    return info
-}
-
-async function fetchGateway(address, validationKey) {
-    const res = await fetch(address, {headers: {'x-gateway-validation': validationKey}})
-    return await res.json()
 }
 
 module.exports = settingsRoutes
