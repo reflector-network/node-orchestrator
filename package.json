@@ -1,6 +1,6 @@
 {
   "name": "@reflector/node-orchestrator",
-  "version": "0.13.0-rc1",
+  "version": "0.13.0",
   "description": "Orchestrator service for Reflector cluster nodes",
   "author": "team@stellar.expert",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "url": "git@github.com:reflector-network/node-orchestrator.git"
   },
   "dependencies": {
-    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.2.0-rc6",
+    "@reflector/reflector-shared": "github:reflector-network/reflector-shared#v7.2.0",
     "@stellar-expert/tx-meta-effects-parser": "^8.3.3",
     "@stellar/stellar-sdk": "17.0.1",
     "axios": "1.15.0",
