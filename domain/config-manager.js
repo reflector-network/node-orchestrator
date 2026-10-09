@@ -8,12 +8,14 @@ const {
     normalizeTimestamp,
     UpdateType,
     areAllSignaturesPresent,
-    ContractTypes
+    ContractTypes,
+    simulationRejectedCode
 } = require('@reflector/reflector-shared')
 const {StrKey} = require('@stellar/stellar-sdk')
 const ConfigEnvelopeModel = require('../persistence-layer/models/contract-config')
 const MessageTypes = require('../server/ws/handlers/message-types')
 const ChannelTypes = require('../server/ws/channel-types')
+const {serviceUnavailable} = require('../server/errors')
 const logger = require('../logger')
 const {getUpdateTx, getAccountSequence} = require('../utils/rpc-helper')
 const ConfigStatus = require('./config-status')
@@ -417,7 +419,10 @@ const maxBuildFailureLength = 500
 /**
  * Builds the transaction of a new proposal once, which simulates its contract call. An update whose call fails would
  * stay PENDING until it expires and block every other proposal meanwhile, so it is refused before anyone votes. A
- * change on chain between now and the switch time can still make the round fail
+ * change on chain between now and the switch time can still make the round fail. Only a host refusal of the call
+ * (reflector-shared marks it with simulationRejectedCode) or an invalid update is a refusal; a check that could not run
+ * - an rpc that did not answer, or reported an error of its own - says nothing about the proposal, so the reply asks to
+ * submit it again instead
  * @param {Config} newConfig - proposed config
  * @param {number} timestamp - switch time the update would get
  * @returns {Promise<void>}
@@ -427,9 +432,13 @@ async function assertUpdateBuilds(newConfig, timestamp) {
         await checkUpdateBuilds(__currentConfig.envelope.config, newConfig, timestamp)
     } catch (err) {
         //the reply carries the top-level message only: the causes of an rpc failure can name a provider url
-        logger.warn({err}, 'Refused a proposal whose update transaction cannot be built')
         const reason = err.message.length > maxBuildFailureLength ? err.message.slice(0, maxBuildFailureLength) + '...' : err.message
-        throw new ValidationError(`The update transaction cannot be built: ${reason}`)
+        if ((!!err.code && err.code === simulationRejectedCode) || err instanceof ValidationError) {
+            logger.warn({err}, 'Refused a proposal whose update transaction cannot be built')
+            throw new ValidationError(`The update transaction cannot be built: ${reason}`)
+        }
+        logger.warn({err}, 'Could not check whether a proposal\'s update transaction builds')
+        throw serviceUnavailable(`The update transaction could not be checked right now, submit the proposal again: ${reason}`)
     }
 }
 

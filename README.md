@@ -168,9 +168,10 @@ anonymous clients share 5 slots. Node connections are unaffected either way. IPv
   submits and polls Soroban RPC for it.
 - **A proposal is built before it is accepted.** A new proposal that calls a contract is built once, from the system
   account's current sequence, as the first attempt at its switch time would be. Building simulates the call, so a
-  proposal the contracts refuse is refused with the simulation error, and so is one that cannot be checked because
-  Soroban RPC does not answer. A node set change calls no contract and is not built. A change on chain between the
-  proposal and its switch time can still make its rounds fail.
+  proposal the contracts refuse is refused with the simulation error (400). A check that cannot run - Soroban RPC does
+  not answer, or reports an error of its own such as `preflight queue full` - refuses nothing: the reply is a 503 that
+  asks to submit the proposal again. A node set change calls no contract and is not built. A change on chain between
+  the proposal and its switch time can still make its rounds fail.
 - **Votes change while an update is open.** A signer can change their vote, and the initiator withdraw the proposal,
   while it is voting or pending. A pending update's rounds start at every 2-minute tick from its switch time on (every
   tick when it allows early submission), and from 15 s before such a tick until its round is over, 61 s after it, a
